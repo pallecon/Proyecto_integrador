@@ -1,0 +1,86 @@
+-- 1. Modalidades de graduación
+CREATE TABLE Modalidades_Graduacion (
+    id_modalidad INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_modalidad VARCHAR(50) NOT NULL,
+    descripcion TEXT
+);
+
+-- 2. Estudiantes
+CREATE TABLE Estudiantes (
+    id_estudiante INT AUTO_INCREMENT PRIMARY KEY,
+    CI VARCHAR(15) NOT NULL UNIQUE,
+    RU VARCHAR(15) NOT NULL UNIQUE,
+    nombre VARCHAR(50) NOT NULL,
+    apellidos VARCHAR(50) NOT NULL,
+    correo VARCHAR(100),
+    estado ENUM('activo', 'inactivo', 'graduado') NOT NULL,
+    id_modalidad INT NOT NULL,
+    FOREIGN KEY (id_modalidad) REFERENCES Modalidades_Graduacion(id_modalidad)
+);
+
+-- 3. Docentes (pueden ser tutores o revisores)
+CREATE TABLE Docentes (
+    id_docente INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL,
+    correo VARCHAR(100),
+    area_especialidad VARCHAR(100),
+    modalidad_graduacion VARCHAR(100) 
+);
+
+
+-- 4. Asignación de tutor
+CREATE TABLE Asignacion_Tutor (
+    id_asignacion INT AUTO_INCREMENT PRIMARY KEY,
+    id_estudiante INT NOT NULL,
+    id_tutor INT NOT NULL,
+    fecha_asignacion DATE NOT NULL,
+    FOREIGN KEY (id_estudiante) REFERENCES Estudiantes(id_estudiante),
+    FOREIGN KEY (id_tutor) REFERENCES Docentes(id_docente)
+);
+
+-- 5. Etapas de titulación
+CREATE TABLE Etapas_Titulacion (
+    id_etapa INT AUTO_INCREMENT PRIMARY KEY,
+    nombre_etapa VARCHAR(50) NOT NULL,
+    descripcion TEXT,
+    id_modalidad INT NOT NULL,
+    FOREIGN KEY (id_modalidad) REFERENCES Modalidades_Graduacion(id_modalidad)
+);
+
+-- 6. Detalle del estudiante
+CREATE TABLE Detalle_Estudiante (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    id_estudiante INT NOT NULL,
+    observaciones ENUM('activo', 'no activo') NOT NULL,
+    id_modalidad INT NOT NULL,
+    estado_pago ENUM('Pagado', 'No Pagado') NOT NULL,
+    FOREIGN KEY (id_estudiante) REFERENCES Estudiantes(id_estudiante),
+    FOREIGN KEY (id_modalidad) REFERENCES Modalidades_Graduacion(id_modalidad)
+);
+-- 7. Monitoreo de titulación
+CREATE TABLE Monitoreo_Titulacion (
+    id_monitoreo INT AUTO_INCREMENT PRIMARY KEY,
+    id_estudiante INT NOT NULL,
+    id_etapa INT NOT NULL,
+    id_tutor INT NOT NULL,
+    id_revisor INT,
+    primera_entrega_estado ENUM('completado', 'falta') DEFAULT 'falta',
+    fecha_primera_entrega DATE,
+    segunda_entrega_estado ENUM('completado', 'falta') DEFAULT 'falta',
+    fecha_segunda_entrega DATE,
+    estado_etapa ENUM('completado', 'en_proceso', 'pendiente') NOT NULL,
+    FOREIGN KEY (id_estudiante) REFERENCES Estudiantes(id_estudiante),
+    FOREIGN KEY (id_etapa) REFERENCES Etapas_Titulacion(id_etapa),
+    FOREIGN KEY (id_tutor) REFERENCES Docentes(id_docente),
+    FOREIGN KEY (id_revisor) REFERENCES Docentes(id_docente)
+);
+
+-- 8. Asignación de revisor (docente)
+CREATE TABLE Asignacion_Revisor (
+    id_asignacion INT AUTO_INCREMENT PRIMARY KEY,
+    id_estudiante INT NOT NULL,
+    id_revisor INT NOT NULL,
+    fecha_asignacion DATE NOT NULL,
+    FOREIGN KEY (id_estudiante) REFERENCES Estudiantes(id_estudiante),
+    FOREIGN KEY (id_revisor) REFERENCES Docentes(id_docente)
+);
