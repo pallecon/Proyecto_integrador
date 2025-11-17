@@ -2,111 +2,33 @@ from django.http import HttpResponse
 from django.urls import path
 from conexion import crear_conexion
 
-def monitoreo_titulacion_view(request):
-    conexion = crear_conexion('localhost', 'root', '/73588144/', 'proyecto')
-    cursor = conexion.cursor()
+# ============ FUNCIONES AUXILIARES ============
 
-    success_message = ""
-    error_message = ""
+def calcular_estado_etapa(primera, segunda):
+    """Calcula el estado de la etapa basado en las entregas."""
+    if primera == "completado" and segunda == "completado":
+        return "completado"
+    elif (primera == "completado" and segunda == "falta") or (primera == "falta" and segunda == "completado"):
+        return "en_proceso"
+    elif primera == "falta" and segunda == "falta":
+        return "pendiente"
+    return "pendiente"
 
-    if request.method == "POST":
-        accion = request.POST.get("accion")
-
-        def calcular_estado_etapa(primera, segunda):
-            if primera == "completado" and segunda == "completado":
-                return "completado"
-            elif (primera == "completado" and segunda == "falta") or (primera == "falta" and segunda == "completado"):
-                return "en_proceso"
-            elif primera == "falta" and segunda == "falta":
-                return "pendiente"
-            else:
-                return "pendiente"
-
-        if accion == "crear":
-            campos = [
-                "id_estudiante", "id_etapa", "id_tutor", "id_revisor",
-                "primera_entrega_estado", "fecha_primera_entrega",
-                "segunda_entrega_estado", "fecha_segunda_entrega"
-            ]
-            valores = [request.POST.get(c) for c in campos]
-
-            estado_etapa = calcular_estado_etapa(
-                request.POST.get("primera_entrega_estado"),
-                request.POST.get("segunda_entrega_estado")
-            )
-            campos.insert(4, "estado_etapa")
-            valores.insert(4, estado_etapa)
-            try:
-                cursor.execute(f"""
-                    INSERT INTO Monitoreo_Titulacion (
-                        {', '.join(campos)}
-                    ) VALUES ({', '.join(['%s'] * len(campos))})
-                """, valores)
-                conexion.commit()
-                success_message = "Registro creado exitosamente!"
-            except Exception as e:
-                print(f"Error al crear registro: {e}")
-                error_message = f"Error al crear registro: {e}"
-
-        elif accion == "actualizar":
-            id_monitoreo = request.POST.get("id_monitoreo")
-            campos = [
-                "id_estudiante", "id_etapa", "id_tutor", "id_revisor",
-                "primera_entrega_estado", "fecha_primera_entrega",
-                "segunda_entrega_estado", "fecha_segunda_entrega"
-            ]
-            valores = [request.POST.get(c) for c in campos]
-            estado_etapa = calcular_estado_etapa(
-                request.POST.get("primera_entrega_estado"),
-                request.POST.get("segunda_entrega_estado")
-            )
-            campos.insert(4, "estado_etapa")
-            valores.insert(4, estado_etapa)
-            try:
-                cursor.execute(f"""
-                    UPDATE Monitoreo_Titulacion
-                    SET {', '.join([f"{c}=%s" for c in campos])}
-                    WHERE id_monitoreo=%s
-                """, valores + [id_monitoreo])
-                cursor.execute("""
-                    UPDATE Asignacion_revisor
-                    SET id_revisor = %s
-                    WHERE id_estudiante = %s
-                """, (request.POST.get("id_revisor"), request.POST.get("id_estudiante")))
-                conexion.commit()
-                success_message = "Registro actualizado exitosamente!"
-            except Exception as e:
-                print(f"Error al actualizar registro: {e}")
-                error_message = f"Error al actualizar registro: {e}"
-
-        elif accion == "eliminar":
-            id_monitoreo = request.POST.get("id_monitoreo")
-            try:
-                cursor.execute("""
-                    DELETE FROM Monitoreo_Titulacion WHERE id_monitoreo = %s
-                """, (id_monitoreo,))
-                conexion.commit()
-                success_message = "Registro eliminado exitosamente!"
-            except Exception as e:
-                print(f"Error al eliminar registro: {e}")
-                error_message = f"Error al eliminar registro: {e}"
-
+def obtener_datos_base(cursor):
+    """Obtiene estudiantes, etapas y docentes de la BD."""
     cursor.execute("SELECT id_estudiante, nombre FROM Estudiantes")
-    estudiantes = cursor.fetchall() 
-
+    estudiantes = cursor.fetchall()
+    
     cursor.execute("SELECT id_etapa, nombre_etapa FROM Etapas_Titulacion")
-    etapas = cursor.fetchall()  
-
+    etapas = cursor.fetchall()
+    
     cursor.execute("SELECT id_docente, nombre FROM Docentes")
-    docentes = cursor.fetchall()  
+    docentes = cursor.fetchall()
+    
+    return estudiantes, etapas, docentes
 
-    columnas_monitoreo = [
-        "id_monitoreo", "id_estudiante", "id_etapa", "id_tutor", "id_revisor",
-        "estado_etapa",
-        "primera_entrega_estado", "fecha_primera_entrega",
-        "segunda_entrega_estado", "fecha_segunda_entrega"
-    ]
-
+def obtener_registros(cursor):
+    """Obtiene todos los registros de monitoreo de titulación."""
     select_sql = """
         SELECT 
             m.id_monitoreo,
@@ -130,385 +52,764 @@ def monitoreo_titulacion_view(request):
         LEFT JOIN Docentes dr ON m.id_revisor = dr.id_docente
         ORDER BY m.id_monitoreo ASC
     """
+    cursor.execute(select_sql)
+    return cursor.fetchall()
 
+def procesar_accion(request, cursor, conexion):
+    """Procesa las acciones POST (crear, actualizar, eliminar)."""
+    success_message = ""
+    error_message = ""
+    accion = request.POST.get("accion")
+    
     try:
-        cursor.execute(select_sql)
-        registros = cursor.fetchall()
+        if accion == "crear":
+            success_message, error_message = _crear_registro(request, cursor, conexion)
+        elif accion == "actualizar":
+            success_message, error_message = _actualizar_registro(request, cursor, conexion)
+        elif accion == "eliminar":
+            success_message, error_message = _anular_registro(request, cursor, conexion)
     except Exception as e:
-        error_message = f"Error al consultar registros: {e}"
-        registros = []
+        error_message = f"Error procesando acción: {e}"
+    
+    return success_message, error_message
 
-    columnas_tabla = [
-        ("id_monitoreo", "ID Monitoreo"),
-        ("estudiante_nombre", "Estudiante"),
-        ("nombre_etapa", "Etapa"),
-        ("tutor_nombre", "Tutor"),
-        ("revisor_nombre", "Revisor"),
-        ("primera_entrega_estado", "1ra Entrega Estado"),
-        ("fecha_primera_entrega", "Fecha 1ra Entrega"),
-        ("segunda_entrega_estado", "2da Entrega Estado"),
-        ("fecha_segunda_entrega", "Fecha 2da Entrega"),
-        ("estado_etapa", "Etapa de estado"),
-        ("pre_defensa", "Pre Defensa"), 
+def _crear_registro(request, cursor, conexion):
+    """Crea un nuevo registro de monitoreo."""
+    campos = [
+        "id_estudiante", "id_etapa", "id_tutor", "id_revisor",
+        "primera_entrega_estado", "fecha_primera_entrega",
+        "segunda_entrega_estado", "fecha_segunda_entrega"
     ]
+    valores = [request.POST.get(c) for c in campos]
+    
+    estado_etapa = calcular_estado_etapa(
+        request.POST.get("primera_entrega_estado"),
+        request.POST.get("segunda_entrega_estado")
+    )
+    campos.insert(4, "estado_etapa")
+    valores.insert(4, estado_etapa)
+    
+    try:
+        cursor.execute(f"""
+            INSERT INTO Monitoreo_Titulacion ({', '.join(campos)})
+            VALUES ({', '.join(['%s'] * len(campos))})
+        """, valores)
+        conexion.commit()
+        return "✓ Registro creado exitosamente", ""
+    except Exception as e:
+        return "", f"✗ Error al crear registro: {e}"
+
+def _actualizar_registro(request, cursor, conexion):
+    """Actualiza un registro existente."""
+    id_monitoreo = request.POST.get("id_monitoreo")
+    campos = [
+        "id_estudiante", "id_etapa", "id_tutor", "id_revisor",
+        "primera_entrega_estado", "fecha_primera_entrega",
+        "segunda_entrega_estado", "fecha_segunda_entrega"
+    ]
+    valores = [request.POST.get(c) for c in campos]
+    
+    estado_etapa = calcular_estado_etapa(
+        request.POST.get("primera_entrega_estado"),
+        request.POST.get("segunda_entrega_estado")
+    )
+    campos.insert(4, "estado_etapa")
+    valores.insert(4, estado_etapa)
+    
+    try:
+        cursor.execute(f"""
+            UPDATE Monitoreo_Titulacion
+            SET {', '.join([f"{c}=%s" for c in campos])}
+            WHERE id_monitoreo=%s
+        """, valores + [id_monitoreo])
+        
+        cursor.execute("""
+            UPDATE Asignacion_revisor
+            SET id_revisor = %s
+            WHERE id_estudiante = %s
+        """, (request.POST.get("id_revisor"), request.POST.get("id_estudiante")))
+        
+        conexion.commit()
+        return "✓ Registro actualizado exitosamente", ""
+    except Exception as e:
+        return "", f"✗ Error al actualizar registro: {e}"
+
+def _anular_registro(request, cursor, conexion):
+    """Anula un registro (marca como anulado)."""
+    id_monitoreo = request.POST.get("id_monitoreo")
+    
+    try:
+        cursor.execute("""
+            UPDATE Monitoreo_Titulacion
+            SET estado_etapa = %s
+            WHERE id_monitoreo = %s
+        """, ('anulado', id_monitoreo))
+        conexion.commit()
+        return "✓ Registro anulado exitosamente", ""
+    except Exception as e:
+        return "", f"✗ Error al anular registro: {e}"
+
+# ============ VISTAS HTML ============
+
+def generar_html_formularios(estudiantes, etapas, docentes):
+    """Genera el HTML de los formularios."""
+    return f'''
+        <!-- Modal Crear -->
+        <div class="modal" id="modalCrear">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="header-title">
+                        <i class="fas fa-plus-circle"></i> 
+                        <h2>Crear Nuevo Registro</h2>
+                    </div>
+                    <button class="modal-close" onclick="closeModal('modalCrear')">&times;</button>
+                </div>
+                <form method="post" class="form-elegante">
+                    <input type="hidden" name="accion" value="crear">
+                    {_generar_campos_formulario(estudiantes, etapas, docentes, "crear")}
+                    <div class="form-buttons">
+                        <button type="button" class="btn-cancel" onclick="closeModal('modalCrear')">Cancelar</button>
+                        <button type="submit" class="btn-submit">Guardar Registro</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Actualizar -->
+        <div class="modal" id="modalActualizar">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="header-title">
+                        <i class="fas fa-edit"></i>
+                        <h2>Editar Registro</h2>
+                    </div>
+                    <button class="modal-close" onclick="closeModal('modalActualizar')">&times;</button>
+                </div>
+                <form method="post" class="form-elegante">
+                    <input type="hidden" name="accion" value="actualizar">
+                    <input type="hidden" name="id_monitoreo" id="update_id_monitoreo">
+                    {_generar_campos_formulario(estudiantes, etapas, docentes, "update")}
+                    <div class="form-buttons">
+                        <button type="button" class="btn-cancel" onclick="closeModal('modalActualizar')">Cancelar</button>
+                        <button type="submit" class="btn-submit">Actualizar Registro</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    '''
+
+def _generar_campos_formulario(estudiantes, etapas, docentes, prefijo=""):
+    """Genera los campos del formulario."""
+    id_prefijo = f"{prefijo}_" if prefijo else ""
+    
+    opciones_estudiantes = ''.join([f'<option value="{e[0]}">{e[1]}</option>' for e in estudiantes])
+    opciones_etapas = ''.join([f'<option value="{et[0]}">{et[1]}</option>' for et in etapas])
+    opciones_docentes = ''.join([f'<option value="{d[0]}">{d[1]}</option>' for d in docentes])
+    
+    return f'''
+        <div class="form-group">
+            <div class="form-field">
+                <label>Estudiante *</label>
+                <select name="id_estudiante" id="{id_prefijo}id_estudiante" required>
+                    <option value="">Seleccione un estudiante</option>
+                    {opciones_estudiantes}
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Etapa *</label>
+                <select name="id_etapa" id="{id_prefijo}id_etapa" required>
+                    <option value="">Seleccione una etapa</option>
+                    {opciones_etapas}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <div class="form-field">
+                <label>Tutor *</label>
+                <select name="id_tutor" id="{id_prefijo}id_tutor" required>
+                    <option value="">Seleccione un tutor</option>
+                    {opciones_docentes}
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Revisor</label>
+                <select name="id_revisor" id="{id_prefijo}id_revisor">
+                    <option value="">Seleccione un revisor</option>
+                    {opciones_docentes}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <div class="form-field">
+                <label>1ra Entrega Estado *</label>
+                <select name="primera_entrega_estado" id="{id_prefijo}primera_entrega_estado" required>
+                    <option value="">Seleccione</option>
+                    <option value="completado">Completado</option>
+                    <option value="falta">Falta</option>
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Fecha 1ra Entrega</label>
+                <input type="date" name="fecha_primera_entrega" id="{id_prefijo}fecha_primera_entrega">
+            </div>
+        </div>
+        <div class="form-group">
+            <div class="form-field">
+                <label>2da Entrega Estado *</label>
+                <select name="segunda_entrega_estado" id="{id_prefijo}segunda_entrega_estado" required>
+                    <option value="">Seleccione</option>
+                    <option value="completado">Completado</option>
+                    <option value="falta">Falta</option>
+                </select>
+            </div>
+            <div class="form-field">
+                <label>Fecha 2da Entrega</label>
+                <input type="date" name="fecha_segunda_entrega" id="{id_prefijo}fecha_segunda_entrega">
+            </div>
+        </div>
+    '''
+
+def generar_fila_tabla(r):
+    """Genera una fila de la tabla de registros."""
+    estado_actual = r[9]
+    fila_clase = "anulado-row" if estado_actual == "anulado" else ""
+    
+    primera_estado = r[10] or "-"
+    fecha_primera = r[11].strftime('%d/%m/%Y') if r[11] else '-'
+    
+    segunda_estado = r[12] or "-"
+    fecha_segunda = r[13].strftime('%d/%m/%Y') if r[13] else '-'
+    
+    clase_estado = f"estado-{estado_actual}" if estado_actual in ["completado", "en_proceso", "pendiente"] else ("estado-anulado" if estado_actual == "anulado" else "estado-pendiente")
+    label_estado = estado_actual.replace('_', ' ').capitalize() if estado_actual != "anulado" else "Anulado"
+    
+    pre_defensa = '<span class="badge badge-success">Habilitado</span>' if estado_actual == "completado" else '<span class="badge badge-danger">No Habilitado</span>'
+    
+    editar_disabled = "disabled" if estado_actual == "anulado" else ""
+    editar_cursor = "style='opacity:0.6;pointer-events:none;'" if estado_actual == "anulado" else ""
+    
+    return f'''
+        <tr class='{fila_clase}'>
+            <td><strong>{r[2]}</strong></td>
+            <td>{r[4]}</td>
+            <td>{r[6]}</td>
+            <td>{r[8]}</td>
+            <td class="fecha-entrega">{primera_estado.capitalize()}<br><small>{fecha_primera}</small></td>
+            <td class="fecha-entrega">{segunda_estado.capitalize()}<br><small>{fecha_segunda}</small></td>
+            <td><span class='{clase_estado}'>{label_estado}</span></td>
+            <td style='text-align:center;'>{pre_defensa}</td>
+            <td class="action-cell">
+                <button class="btn-edit" onclick="openEditForm('{r[0]}', '{r[1]}', '{r[3]}', '{r[5]}', '{r[7]}', '{r[10]}', '{r[11] if r[11] else ""}', '{r[12]}', '{r[13] if r[13] else ""}')" title="Editar" {editar_disabled} {editar_cursor}><i class="fas fa-edit"></i></button>
+                <button class="btn-delete" onclick="confirmAnular('{r[0]}')" title="Anular"><i class="fas fa-ban"></i></button>
+            </td>
+        </tr>
+    '''
+
+def _generar_estilos_css():
+    """Retorna el CSS estilizado con creatividad."""
+    return '''
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            :root {
+                --primary: #0f3460; --primary-dark: #051e3e; --primary-light: #16547a;
+                --secondary: #533483; --success: #43a047; --warning: #ffa726;
+                --danger: #ef5350; --dark: #0a1929; --muted: #546e7a;
+                --light: #ecf0f1; --border: #b0bec5;
+                --shadow: 0 4px 12px rgba(0,0,0,0.15);
+                --shadow-lg: 0 8px 24px rgba(0,0,0,0.25);
+            }
+            body { 
+                font-family: 'Inter', sans-serif; 
+                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+                min-height: 100vh; 
+                color: var(--dark); 
+                line-height: 1.6; 
+            }
+            .top-bar { 
+                display: flex; 
+                justify-content: space-between; 
+                align-items: center; 
+                background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); 
+                padding: 16px 32px; 
+                box-shadow: var(--shadow-lg);
+                border-bottom: 5px solid #1e5a96;
+                position: sticky; 
+                top: 0; 
+                z-index: 100;
+                gap: 30px;
+            }
+            .top-title {
+                flex: 1;
+                text-align: right;
+                color: #ffffff;
+                font-size: 1.8em;
+                font-weight: 700;
+                margin: 0;
+                letter-spacing: 0.8px;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+                padding-right: 20px;
+            }
+            .back-button { 
+                display: inline-flex; 
+                align-items: center; 
+                gap: 8px; 
+                background: rgba(255, 255, 255, 0.15); 
+                color: #ffffff; 
+                padding: 10px 20px; 
+                border-radius: 8px; 
+                border: 2px solid rgba(255, 255, 255, 0.3); 
+                cursor: pointer; 
+                font-weight: 600; 
+                transition: all 0.3s ease;
+                backdrop-filter: blur(10px);
+            }
+            .back-button:hover { 
+                background: rgba(255, 255, 255, 0.25);
+                transform: translateX(-4px); 
+                box-shadow: var(--shadow-lg); 
+                border-color: #ffffff;
+            }
+            .container { 
+                max-width: 1400px; 
+                margin: 0 auto; 
+                padding: 32px 20px 40px 20px; 
+            }
+            .action-buttons { 
+                display: flex; 
+                justify-content: flex-end; 
+                margin-bottom: 28px; 
+                gap: 12px; 
+            }
+            .btn { 
+                padding: 12px 24px; 
+                border-radius: 8px; 
+                border: none; 
+                cursor: pointer; 
+                font-weight: 600; 
+                transition: all 0.3s; 
+                display: inline-flex; 
+                align-items: center; 
+                gap: 8px; 
+                font-size: 0.95em; 
+                box-shadow: var(--shadow);
+            }
+            .btn-primary { 
+                background: linear-gradient(135deg, #0f3460 0%, #1e5a96 100%); 
+                color: white; 
+                border: 2px solid #ffffff;
+            }
+            .btn-primary:hover { 
+                transform: translateY(-3px); 
+                box-shadow: var(--shadow-lg);
+            }
+            .message-area { 
+                padding: 16px 20px; 
+                border-radius: 12px; 
+                margin-bottom: 24px; 
+                font-weight: 600; 
+                display: none; 
+                align-items: center; 
+                gap: 12px; 
+                animation: slideDown 0.3s;
+                backdrop-filter: blur(10px);
+            }
+            .message-area.success { 
+                background: rgba(27, 94, 32, 0.9); 
+                color: #81c784; 
+                border-left: 5px solid #43a047; 
+                display: flex; 
+            }
+            .message-area.error { 
+                background: rgba(183, 28, 28, 0.9); 
+                color: #ef9a9a; 
+                border-left: 5px solid #ef5350; 
+                display: flex; 
+            }
+            @keyframes slideDown { 
+                from { opacity: 0; transform: translateY(-10px); } 
+                to { opacity: 1; transform: translateY(0); } 
+            }
+            
+            /* Modal Styles */
+            .modal { 
+                display: none; 
+                position: fixed; 
+                top: 0; 
+                left: 0; 
+                width: 100%; 
+                height: 100%; 
+                background: rgba(0, 0, 0, 0.6); 
+                z-index: 1000; 
+                justify-content: center; 
+                align-items: center;
+                backdrop-filter: blur(5px);
+            }
+            .modal.show { display: flex; }
+            .modal-content { 
+                background: #ffffff; 
+                padding: 0; 
+                border-radius: 16px; 
+                box-shadow: 0 10px 40px rgba(0,0,0,0.3); 
+                border: none; 
+                max-width: 600px; 
+                width: 90%; 
+                max-height: 90vh; 
+                overflow-y: auto; 
+                animation: modalSlideIn 0.3s;
+            }
+            @keyframes modalSlideIn { 
+                from { transform: scale(0.8) translateY(-50px); opacity: 0; } 
+                to { transform: scale(1) translateY(0); opacity: 1; } 
+            }
+            .modal-header { 
+                display: flex; 
+                justify-content: space-between; 
+                align-items: center; 
+                padding: 24px; 
+                border-bottom: 3px solid #f0f0f0; 
+                background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            }
+            .header-title {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .modal-header h2 { 
+                color: #0f3460; 
+                font-size: 1.3em; 
+                margin: 0;
+            }
+            .modal-header i {
+                color: #1e5a96;
+                font-size: 1.5em;
+            }
+            .modal-close { 
+                background: none; 
+                border: none; 
+                color: #0f3460; 
+                font-size: 2em; 
+                cursor: pointer; 
+                transition: all 0.3s;
+                width: 40px;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+            }
+            .modal-close:hover { 
+                color: #ef5350;
+                background: rgba(239, 83, 80, 0.1);
+                transform: rotate(90deg);
+            }
+            
+            /* Form Styles */
+            .form-elegante {
+                padding: 24px;
+            }
+            .form-group { 
+                display: grid; 
+                grid-template-columns: 1fr 1fr; 
+                gap: 20px; 
+                margin-bottom: 20px;
+            }
+            .form-group.full { grid-column: span 2; }
+            .form-field { 
+                display: flex; 
+                flex-direction: column; 
+            }
+            .form-field label { 
+                font-weight: 600; 
+                color: #0f3460; 
+                margin-bottom: 8px; 
+                font-size: 0.95em;
+            }
+            .form-field input, .form-field select { 
+                padding: 12px; 
+                border: 2px solid #e0e0e0; 
+                border-radius: 8px; 
+                font-size: 0.95em; 
+                font-family: inherit; 
+                transition: all 0.3s; 
+                background: #ffffff; 
+                color: #0a1929;
+            }
+            .form-field input::placeholder { color: #9e9e9e; }
+            .form-field input:focus, .form-field select:focus { 
+                border-color: #0f3460; 
+                box-shadow: 0 0 0 4px rgba(15, 52, 96, 0.1); 
+                outline: none;
+            }
+            .form-buttons { 
+                display: flex; 
+                gap: 12px; 
+                justify-content: center; 
+                padding: 24px; 
+                border-top: 2px solid #f0f0f0;
+            }
+            .btn-submit { 
+                background: linear-gradient(135deg, #0f3460 0%, #1e5a96 100%); 
+                color: white; 
+                border: none; 
+                padding: 12px 28px; 
+                border-radius: 8px; 
+                cursor: pointer; 
+                font-weight: 600;
+                transition: all 0.3s;
+            }
+            .btn-submit:hover { 
+                transform: translateY(-3px); 
+                box-shadow: var(--shadow-lg);
+            }
+            .btn-cancel { 
+                background: #f0f0f0; 
+                color: #0f3460; 
+                border: 2px solid #e0e0e0; 
+                padding: 12px 28px; 
+                border-radius: 8px; 
+                cursor: pointer; 
+                font-weight: 600;
+                transition: all 0.3s;
+            }
+            .btn-cancel:hover { 
+                background: #e8e8e8;
+                border-color: #0f3460;
+            }
+            
+            /* Table Styles */
+            .tabla-wrapper { 
+                background: #ffffff; 
+                border-radius: 16px; 
+                box-shadow: var(--shadow-lg); 
+                overflow: hidden; 
+                border: none;
+            }
+            table { 
+                width: 100%; 
+                border-collapse: collapse; 
+            }
+            thead { 
+                background: linear-gradient(135deg, #0f3460 0%, #1e5a96 100%); 
+                color: #ffffff; 
+                border-bottom: 3px solid #1e5a96; 
+            }
+            th { 
+                padding: 18px 12px; 
+                text-align: left; 
+                font-weight: 700; 
+                font-size: 0.9em; 
+                color: #ffffff;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            td { 
+                padding: 16px 12px; 
+                border-bottom: 1px solid #f0f0f0; 
+                color: #0a1929;
+            }
+            td strong {
+                color: #0f3460;
+            }
+            .fecha-entrega small {
+                color: #546e7a;
+                font-size: 0.85em;
+            }
+            tbody tr { 
+                transition: all 0.3s ease; 
+            }
+            tbody tr:hover { 
+                background: linear-gradient(90deg, rgba(15, 52, 96, 0.05) 0%, rgba(30, 90, 150, 0.05) 100%);
+                transform: scale(1.01);
+            }
+            .anulado-row { opacity: 0.5; filter: grayscale(1); }
+            .estado-anulado { 
+                background: #9e9e9e; 
+                color: #ffffff; 
+                padding: 6px 12px; 
+                border-radius: 6px; 
+                font-weight: 700; 
+                font-size: 0.85em; 
+            }
+            .estado-completado { 
+                background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%); 
+                color: #81c784; 
+                padding: 6px 12px; 
+                border-radius: 6px; 
+                font-weight: 700;
+            }
+            .estado-en_proceso { 
+                background: linear-gradient(135deg, #ff6f00 0%, #f57c00 100%); 
+                color: #ffe0b2; 
+                padding: 6px 12px; 
+                border-radius: 6px; 
+                font-weight: 700; 
+            }
+            .estado-pendiente { 
+                background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%); 
+                color: #bbdefb; 
+                padding: 6px 12px; 
+                border-radius: 6px; 
+                font-weight: 700; 
+            }
+            .badge { 
+                display: inline-block; 
+                padding: 8px 16px; 
+                border-radius: 20px; 
+                font-weight: 700;
+                font-size: 0.9em;
+            }
+            .badge-success { 
+                background: linear-gradient(135deg, #1b5e20 0%, #43a047 100%); 
+                color: #ffffff; 
+            }
+            .badge-danger { 
+                background: linear-gradient(135deg, #b71c1c 0%, #d71c1c 100%); 
+                color: #ffffff; 
+            }
+            .action-cell { 
+                display: flex; 
+                gap: 10px; 
+                justify-content: center; 
+            }
+            .btn-edit, .btn-delete { 
+                padding: 8px 14px; 
+                border-radius: 6px; 
+                border: none; 
+                cursor: pointer; 
+                font-weight: 600; 
+                font-size: 0.85em; 
+                transition: all 0.3s;
+            }
+            .btn-edit { 
+                background: linear-gradient(135deg, #6d4c41 0%, #8d5c41 100%); 
+                color: #ffb74d; 
+            }
+            .btn-edit:hover { 
+                transform: scale(1.1) rotate(5deg); 
+                box-shadow: var(--shadow);
+            }
+            .btn-delete { 
+                background: linear-gradient(135deg, #b71c1c 0%, #d71c1c 100%); 
+                color: #ffffff; 
+            }
+            .btn-delete:hover { 
+                transform: scale(1.1) rotate(-5deg); 
+                box-shadow: var(--shadow);
+            }
+            
+            @media (max-width: 768px) {
+                .form-group { grid-template-columns: 1fr; }
+                .modal-content { width: 95%; }
+                th, td { padding: 10px 6px; font-size: 0.9em; }
+                .top-bar { flex-direction: column; gap: 12px; padding: 12px; }
+                .action-buttons { justify-content: center; }
+            }
+
+            .top-title {
+                flex: 1;
+                text-align: right;
+                color: #ffffff;
+                font-size: 1.8em;
+                font-weight: 700;
+                margin: 0;
+                letter-spacing: 0.8px;
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+                padding-right: 20px;
+            }
+        </style>
+    '''
+
+
+def monitoreo_titulacion_view(request):
+    """Vista principal del monitoreo de titulación."""
+    conexion = crear_conexion('localhost', 'root', '/73588144/', 'proyecto')
+    cursor = conexion.cursor()
+
+    success_message = ""
+    error_message = ""
+
+    if request.method == "POST":
+        success_message, error_message = procesar_accion(request, cursor, conexion)
+
+    estudiantes, etapas, docentes = obtener_datos_base(cursor)
+    registros = obtener_registros(cursor)
+
+    filas_tabla = ''.join([generar_fila_tabla(r) for r in registros])
 
     html = f'''
-    <html>
+    <!DOCTYPE html>
+    <html lang="es">
     <head>
-        <title>Monitoreo de Titulación</title>
-        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Monitoreo de Titulación - Salesiana</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
         <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
         <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-        <style>
-            /* Estilos principales (resumen: diseño limpio y responsivo para la tabla y formularios) */
-            body {{
-                font-family: 'Roboto', sans-serif;
-                background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%);
-                min-height: 100vh;
-                margin: 0;
-                padding: 0;
-                animation: gradientBG 12s ease-in-out infinite alternate;
-                background-size: 200% 200%;
-            }}
-            @keyframes gradientBG {{
-                0% {{ background-position: 0% 50%; }}
-                100% {{ background-position: 100% 50%; }}
-            }}
-            .container {{
-                max-width: 1200px;
-                margin: 40px auto;
-                background: rgba(255,255,255,0.95);
-                padding: 40px 30px 30px 30px;
-                border-radius: 24px;
-                box-shadow: 0 16px 40px rgba(0,0,0,0.18);
-                backdrop-filter: blur(6px);
-                position: relative;
-                transition: box-shadow 0.3s;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }}
-            .tabla-wrapper {{
-                width: 100%;
-                overflow-x: auto;
-                margin: 0 auto 30px auto;
-                border-radius: 16px;
-                box-shadow: 0 4px 24px #b2ebf2;
-                background: rgba(255,255,255,0.98);
-                padding: 10px 0;
-            }}
-            table {{
-                border-collapse: separate;
-                border-spacing: 0;
-                width: 98%;
-                margin: 0 auto;
-                background: transparent;
-                border-radius: 16px;
-                overflow: hidden;
-                box-shadow: none;
-            }}
-            th, td {{
-                border-bottom: 1px solid #b2ebf2;
-                padding: 14px 10px;
-                text-align: center;
-                vertical-align: middle;
-            }}
-            th {{
-                background: linear-gradient(90deg, #0077cc 60%, #4dd0e1 100%);
-                color: #fff;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                font-size: 1em;
-            }}
-            tr:last-child td {{
-                border-bottom: none;
-            }}
-            tr {{
-                transition: background 0.25s;
-            }}
-            tr:nth-child(even) {{
-                background-color: #f7fafc;
-            }}
-            tr:hover {{
-                background: linear-gradient(90deg, #e3f2fd 0%, #b2ebf2 100%);
-                box-shadow: 0 2px 12px #b2ebf2;
-            }}
-            .action-buttons {{
-                text-align: center;
-                margin-bottom: 30px;
-            }}
-            .action-buttons button {{
-                margin: 0 10px;
-                padding: 14px 36px;
-                font-size: 1.1em;
-                border-radius: 30px;
-                border: none;
-                background: linear-gradient(90deg, #4dd0e1 60%, #0077cc 100%);
-                color: #fff;
-                cursor: pointer;
-                transition: background 0.3s, transform 0.1s, box-shadow 0.3s;
-                box-shadow: 0 4px 16px rgba(0,0,0,0.09);
-                font-weight: 600;
-            }}
-            .action-buttons button:hover {{
-                background: linear-gradient(90deg, #00bcd4 60%, #0288d1 100%);
-                transform: translateY(-2px) scale(1.04);
-                box-shadow: 0 8px 24px #b2ebf2;
-            }}
-            .formulario {{
-                display: none;
-                padding: 32px 24px;
-                background: rgba(255,255,255,0.97);
-                border: 1.5px solid #b2ebf2;
-                border-radius: 14px;
-                margin-top: 20px;
-                margin-bottom: 30px;
-                box-shadow: 0 4px 24px #b2ebf2;
-                backdrop-filter: blur(2px);
-            }}
-            .formulario h3 {{
-                margin-top: 0;
-                color: #0077cc;
-                text-align: center;
-                margin-bottom: 25px;
-                font-weight: 700;
-                letter-spacing: 1px;
-            }}
-            .formulario form {{
-                display: grid;
-                grid-template-columns: 1fr 2fr;
-                gap: 20px;
-                align-items: center;
-            }}
-            .formulario label {{
-                font-weight: 500;
-                text-align: right;
-                color: #546e7a;
-            }}
-            .formulario input,
-            .formulario select {{
-                padding: 12px;
-                border-radius: 7px;
-                border: 1.5px solid #b0bec5;
-                font-size: 1em;
-                transition: border-color 0.3s, box-shadow 0.3s;
-                background: #f7fafc;
-            }}
-            .formulario input:focus,
-            .formulario select:focus {{
-                border-color: #0077cc;
-                box-shadow: 0 0 8px #b2ebf2;
-                outline: none;
-            }}
-            .formulario button[type="submit"] {{
-                grid-column: span 2;
-                margin-top: 20px;
-                background: linear-gradient(90deg, #0077cc 60%, #4dd0e1 100%);
-                padding: 14px 36px;
-                font-size: 1.1em;
-                border-radius: 30px;
-                border: none;
-                color: #fff;
-                cursor: pointer;
-                transition: background 0.3s, transform 0.1s, box-shadow 0.3s;
-                box-shadow: 0 4px 16px #b2ebf2;
-                font-weight: 600;
-            }}
-            .formulario button[type="submit"]:hover {{
-                background: linear-gradient(90deg, #0288d1 60%, #00bcd4 100%);
-                transform: translateY(-2px) scale(1.04);
-                box-shadow: 0 8px 24px #b2ebf2;
-            }}
-            .formulario .cancel-button button {{
-                background: #90a4ae;
-                color: #fff;
-                padding: 10px 24px;
-                border: none;
-                border-radius: 20px;
-                cursor: pointer;
-                transition: background 0.3s;
-                font-weight: 500;
-            }}
-            .formulario .cancel-button button:hover {{
-                background: #78909c;
-            }}
-            .estado-completado {{
-                font-weight: bold;
-                color: #43a047;
-                text-shadow: 0 1px 2px #e8f5e9;
-            }}
-            .estado-en_proceso {{
-                font-weight: bold;
-                color: #ffa726;
-                text-shadow: 0 1px 2px #fff3e0;
-            }}
-            .estado-pendiente {{
-                font-weight: bold;
-                color: #ef5350;
-                text-shadow: 0 1px 2px #ffebee;
-            }}
-            .message-area {{
-                text-align: center;
-                margin-bottom: 20px;
-                padding: 14px;
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 1.1em;
-                opacity: 0;
-                animation: fadeIn 0.5s ease-out forwards;
-                box-shadow: 0 2px 8px #b2ebf2;
-            }}
-            .message-area.success {{
-                background-color: #e8f5e9;
-                color: #43a047;
-                border: 1.5px solid #43a047;
-            }}
-            .message-area.error {{
-                background-color: #ffebee;
-                color: #ef5350;
-                border: 1.5px solid #ef5350;
-            }}
-            .action-cell {{
-                text-align: center;
-                white-space: nowrap;
-            }}
-            .action-cell button {{
-                margin: 0 4px;
-                padding: 8px 18px;
-                font-size: 0.95em;
-                border-radius: 8px;
-                border: none;
-                cursor: pointer;
-                transition: background 0.3s, transform 0.1s;
-                font-weight: 500;
-            }}
-            .action-cell .edit-button {{
-                background: linear-gradient(90deg, #ffb300 60%, #ffe082 100%);
-                color: #263238;
-            }}
-            .action-cell .edit-button:hover {{
-                background: linear-gradient(90deg, #fb8c00 60%, #ffd54f 100%);
-                transform: translateY(-1px) scale(1.05);
-            }}
-            .action-cell .delete-button {{
-                background: linear-gradient(90deg, #ef5350 60%, #ff8a80 100%);
-                color: #fff;
-            }}
-            .action-cell .delete-button:hover {{
-                background: linear-gradient(90deg, #e53935 60%, #ff5252 100%);
-                transform: translateY(-1px) scale(1.05);
-            }}
-            .back-button {{
-                background: linear-gradient(90deg, #607d8b 60%, #b0bec5 100%);
-                color: #fff;
-                padding: 10px 28px;
-                border: none;
-                border-radius: 20px;
-                cursor: pointer;
-                transition: background 0.3s, transform 0.1s;
-                font-weight: 600;
-                margin-bottom: 24px;
-                display: inline-block;
-                box-shadow: 0 2px 8px #b2ebf2;
-            }}
-            .back-button:hover {{
-                background: linear-gradient(90deg, #546e7a 60%, #90a4ae 100%);
-                transform: translateY(-2px) scale(1.04);
-            }}
-            .back-button:active {{
-                transform: translateY(0);
-            }}
-            @keyframes fadeIn {{
-                from {{ opacity: 0; transform: translateY(-10px); }}
-                to {{ opacity: 1; transform: translateY(0); }}
-            }}
+        {_generar_estilos_css()}
+    </head>
+    <body>
+        <div class="top-bar">
+            <button class="back-button" onclick="window.location.href='/menu'">
+                <i class="fas fa-arrow-left"></i>
+                Volver al Menú
+            </button>
+            <h1 class="top-title">Modalidad de Titulación</h1>
+        </div>
 
-            /* Decoración especial para el select de estudiantes */
-            .select-estudiante-wrapper {{
-                position: relative;
-                display: flex;
-                align-items: center;
-            }}
-            .select-estudiante-wrapper i {{
-                position: absolute;
-                left: 14px;
-                color: #4dd0e1;
-                font-size: 1.2em;
-                pointer-events: none;
-                z-index: 2;
-                top: 50%;
-                transform: translateY(-50%);
-                filter: drop-shadow(0 1px 2px #b2ebf2);
-            }}
-            .select-estudiante {{
-                width: 100%;
-                padding-left: 38px !important;
-                background: linear-gradient(90deg, #e0f7fa 60%, #fff 100%);
-                border-radius: 8px;
-                border: 1.5px solid #4dd0e1;
-                font-size: 1em;
-                transition: border-color 0.3s, box-shadow 0.3s;
-                appearance: none;
-                -webkit-appearance: none;
-                -moz-appearance: none;
-                box-shadow: 0 2px 8px #e0f7fa33;
-                min-height: 44px;
-                color: #0077cc;
-                font-weight: 500;
-            }}
-            .select-estudiante:focus {{
-                border-color: #0077cc;
-                box-shadow: 0 0 10px #b2ebf2;
-                outline: none;
-                background: linear-gradient(90deg, #b2ebf2 60%, #fff 100%);
-            }}
-            .select-estudiante option {{
-                color: #0077cc;
-                background: #f7fafc;
-                font-weight: 400;
-            }}
+        <div class="container">
+            <div id="message-area" class="message-area {'success' if success_message else ('error' if error_message else '')}">
+                <i class="fas {'fa-check-circle' if success_message else 'fa-exclamation-circle' if error_message else ''}"></i>
+                <span>{success_message or error_message}</span>
+            </div>
 
-            /* Estilos para el select2 */
-            .select2-container--default .select2-selection--single {{
-    background: linear-gradient(90deg, #e0f7fa 60%, #fff 100%);
-    border-radius: 8px;
-    border: 1.5px solid #4dd0e1;
-    min-height: 44px;
-    color: #0077cc;
-    font-weight: 500;
-    font-size: 1em;
-    padding-left: 30px;
-}}
-.select2-container--default .select2-selection--single:focus {{
-    border-color: #0077cc;
-    box-shadow: 0 0 10px #b2ebf2;
-}}
-.select2-container--default .select2-results__option--highlighted[aria-selected] {{
-    background: #b2ebf2;
-    color: #0077cc;
-}}
-.select2-container--default .select2-selection--single .select2-selection__arrow {{
-    height: 44px;
-}}
-        </style>
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="openModal('modalCrear')">
+                    <i class="fas fa-plus"></i>
+                    Crear Nuevo Registro
+                </button>
+            </div>
+
+            {generar_html_formularios(estudiantes, etapas, docentes)}
+
+            <!-- Tabla de registros -->
+            <div class="tabla-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Estudiante</th>
+                            <th>Etapa</th>
+                            <th>Tutor</th>
+                            <th>Revisor</th>
+                            <th>1ra Entrega</th>
+                            <th>2da Entrega</th>
+                            <th>Estado</th>
+                            <th>Pre Defensa</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filas_tabla}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <script>
-            // Mostrar/ocultar formularios de crear/actualizar
-            function toggleForm(id, display = 'block') {{
-                document.querySelectorAll('.formulario').forEach(function(f) {{ f.style.display = 'none'; }});
-                const formElement = document.getElementById(id);
-                if (display === 'block') {{
-                    formElement.style.display = 'block';
-                }} else {{
-                    formElement.style.display = 'none';
-                }}
+            function openModal(id) {{
+                const modal = document.getElementById(id);
+                modal.classList.add('show');
             }}
 
-            // Rellenar formulario de edición con los valores seleccionados
+            function closeModal(id) {{
+                const modal = document.getElementById(id);
+                modal.classList.remove('show');
+            }}
+
             function openEditForm(id, estudianteId, etapaId, tutorId, revisorId, primeraEntregaEstado, fechaPrimeraEntrega, segundaEntregaEstado, fechaSegundaEntrega) {{
-                toggleForm('actualizar');
+                openModal('modalActualizar');
                 document.getElementById('update_id_monitoreo').value = id;
                 document.getElementById('update_id_estudiante').value = estudianteId;
                 document.getElementById('update_id_etapa').value = etapaId;
@@ -520,9 +821,8 @@ def monitoreo_titulacion_view(request):
                 document.getElementById('update_fecha_segunda_entrega').value = fechaSegundaEntrega;
             }}
 
-            // Confirmación antes de eliminar
-            function confirmDelete(id) {{
-                if (confirm('¿Estás seguro de que deseas eliminar este registro?')) {{
+            function confirmAnular(id) {{
+                if (confirm('¿Está seguro de anular este registro?')) {{
                     const form = document.createElement('form');
                     form.method = 'post';
                     form.style.display = 'none';
@@ -544,198 +844,23 @@ def monitoreo_titulacion_view(request):
                 }}
             }}
 
-            // Mostrar mensaje si existe
+            // Cerrar modal al hacer click fuera
+            window.addEventListener('click', function(event) {{
+                if (event.target.classList.contains('modal')) {{
+                    event.target.classList.remove('show');
+                }}
+            }});
+
             window.onload = function() {{
                 const messageDiv = document.getElementById('message-area');
-                const messageText = messageDiv.innerText.trim();
-                if (messageText) {{
-                    messageDiv.style.display = 'block';
+                if (messageDiv.innerText.trim()) {{
+                    messageDiv.style.display = 'flex';
+                    setTimeout(() => {{ messageDiv.style.display = 'none'; }}, 5000);
                 }}
+
+                $('#crear_id_estudiante, #update_id_estudiante').select2({{width: '100%'}});
             }};
-
-            // Inicializar select2 en selects de estudiante
-            $(document).ready(function() {{
-                $('#id_estudiante').select2({{
-                    width: '100%',
-                    placeholder: "Seleccione Estudiante"
-                }});
-                $('#update_id_estudiante').select2({{
-                    width: '100%',
-                    placeholder: "Seleccione Estudiante"
-                }});
-            }});
         </script>
-    </head>
-    <body>
-        <!-- Botón para salir / volver -->
-        <button class="back-button" type="button" onclick="window.location.href='/menu'" style="margin-bottom:18px;">Volver al Menú</button>
-        <div class="container">
-            <div class="header">
-                <i class="fa-solid fa-graduation-cap"></i>
-                <h2>Monitoreo de Titulación</h2>
-            </div>
-
-            <!-- Área de mensajes (éxito/error) -->
-            <div id="message-area" class="message-area {'success' if success_message and 'exitosamente' in success_message else 'error' if error_message else ''}" style="display: {'block' if success_message or error_message else 'none'};">
-                {success_message or error_message}
-            </div>
-
-            <!-- Botón para abrir formulario de creación -->
-            <div class="action-buttons">
-                <button onclick="toggleForm('crear')">Crear Nuevo Registro</button>
-            </div>
-
-            <!-- Formulario de creación (oculto por defecto) -->
-            <div class="formulario" id="crear">
-                <h3>Crear Nuevo Registro</h3>
-                <form method="post">
-                    <input type="hidden" name="accion" value="crear">
-                    <label>Estudiante:</label>
-                    <select name="id_estudiante" id="id_estudiante" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{e[0]}">{e[0]} - {e[1]}</option>' for e in estudiantes])}
-                    </select>
-                    <label>Etapa:</label>
-                    <select name="id_etapa" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{et[0]}">{et[1]}</option>' for et in etapas])}
-                    </select>
-                    <label>Tutor:</label>
-                    <select name="id_tutor" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{d[0]}">{d[1]}</option>' for d in docentes])}
-                    </select>
-                    <label>Revisor:</label>
-                    <select name="id_revisor">
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{d[0]}">{d[1]}</option>' for d in docentes])}
-                    </select>
-                    <label>1ra Entrega Estado:</label>
-                    <select name="primera_entrega_estado" required>
-                        <option value="">Seleccione</option>
-                        <option value="completado">Completado</option>
-                        <option value="falta">Falta</option>
-                    </select>
-                    <label>Fecha 1ra Entrega:</label>
-                    <input type="date" name="fecha_primera_entrega">
-                    <label>2da Entrega Estado:</label>
-                    <select name="segunda_entrega_estado" required>
-                        <option value="">Seleccione</option>
-                        <option value="completado">Completado</option>
-                        <option value="falta">Falta</option>
-                    </select>
-                    <label>Fecha 2da Entrega:</label>
-                    <input type="date" name="fecha_segunda_entrega">
-                    <label>Estado Etapa:</label>
-                    <input type="text" name="estado_etapa" value="Automático" readonly style="background:#e0e0e0; color:#888; border:1px solid #b0bec5; cursor:not-allowed;">
-                    <div class="cancel-button" style="grid-column: span 2; text-align:center;">
-                        <button type="button" onclick="toggleForm('crear', 'none')">Cancelar</button>
-                        <button type="submit" style="margin-left:10px;">Guardar</button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- Formulario de edición (oculto por defecto) -->
-            <div class="formulario" id="actualizar">
-                <h3>Editar Registro</h3>
-                <form method="post">
-                    <input type="hidden" name="accion" value="actualizar">
-                    <input type="hidden" name="id_monitoreo" id="update_id_monitoreo">
-                    <label>Estudiante:</label>
-                    <select name="id_estudiante" id="update_id_estudiante" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{e[0]}">{e[0]} - {e[1]}</option>' for e in estudiantes])}
-                    </select>
-                    <label>Etapa:</label>
-                    <select name="id_etapa" id="update_id_etapa" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{et[0]}">{et[1]}</option>' for et in etapas])}
-                    </select>
-                    <label>Tutor:</label>
-                    <select name="id_tutor" id="update_id_tutor" required>
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{d[0]}">{d[1]}</option>' for d in docentes])}
-                    </select>
-                    <label>Revisor:</label>
-                    <select name="id_revisor" id="update_id_revisor">
-                        <option value="">Seleccione</option>
-                        {''.join([f'<option value="{d[0]}">{d[1]}</option>' for d in docentes])}
-                    </select>
-                    <label>1ra Entrega Estado:</label>
-                    <select name="primera_entrega_estado" id="update_primera_entrega_estado" required>
-                        <option value="">Seleccione</option>
-                        <option value="completado">Completado</option>
-                        <option value="falta">Falta</option>
-                    </select>
-                    <label>Fecha 1ra Entrega:</label>
-                    <input type="date" name="fecha_primera_entrega" id="update_fecha_primera_entrega">
-                    <label>2da Entrega Estado:</label>
-                    <select name="segunda_entrega_estado" id="update_segunda_entrega_estado" required>
-                        <option value="">Seleccione</option>
-                        <option value="completado">Completado</option>
-                        <option value="falta">Falta</option>
-                    </select>
-                    <label>Fecha 2da Entrega:</label>
-                    <input type="date" name="fecha_segunda_entrega" id="update_fecha_segunda_entrega">
-                    <label>Estado Etapa:</label>
-                    <input type="text" name="estado_etapa" id="update_estado_etapa" value="Automático" readonly style="background:#e0e0e0; color:#888; border:1px solid #b0bec5; cursor:not-allowed;">
-                    <div class="cancel-button" style="grid-column: span 2; text-align:center;">
-                        <button type="button" onclick="toggleForm('actualizar', 'none')">Cancelar</button>
-                        <button type="submit" style="margin-left:10px;">Actualizar</button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- Tabla de registros -->
-            <div class="tabla-wrapper">
-                <table>
-                    <tr>
-    '''
-    for _, titulo in columnas_tabla:
-        html += f"<th>{titulo}</th>"
-    html += "<th>Acciones</th></tr>"
-
-    for r in registros:
-        html += "<tr>"
-        html += f"<td>{r[0]}</td>"   
-        html += f"<td>{r[2]}</td>"   
-        html += f"<td>{r[4]}</td>"   
-        html += f"<td>{r[6]}</td>"   
-        html += f"<td>{r[8]}</td>"   
-        html += f"<td>{r[10]}</td>"  
-        html += f"<td>{r[11].strftime('%Y-%m-%d') if r[11] else '-'}</td>"  
-        html += f"<td>{r[12]}</td>"  
-        html += f"<td>{r[13].strftime('%Y-%m-%d') if r[13] else '-'}</td>"  
-
-        val = r[9]
-        clase_estado = ""
-        if val == "completado":
-            clase_estado = "estado-completado"
-        elif val == "en_proceso":
-            clase_estado = "estado-en_proceso"
-        elif val == "pendiente":
-            clase_estado = "estado-pendiente"
-        html += f"<td class='{clase_estado}' style='font-size:1.1em; text-align:center;'>{val.capitalize()}</td>"
-
-        if val == "completado":
-            pre_defensa = "<span style='background:#43a047;color:#fff;padding:6px 16px;border-radius:12px;font-weight:700;'>Habilitado</span>"
-        else:
-            pre_defensa = "<span style='background:#ef5350;color:#fff;padding:6px 16px;border-radius:12px;font-weight:700;'>Inhabilitado</span>"
-        html += f"<td style='text-align:center;'>{pre_defensa}</td>"
-
-        html += f'''
-            <td class="action-cell">
-                <button class="edit-button" onclick="openEditForm(
-                    '{r[0]}', '{r[1]}', '{r[3]}', '{r[5]}', '{r[7]}',
-                    '{r[10]}', '{r[11] if r[11] else ""}', '{r[12]}', '{r[13] if r[13] else ""}'
-                )">Editar</button>
-                <button class="delete-button" onclick="confirmDelete('{r[0]}')">Eliminar</button>
-            </td>
-        </tr>
-        '''
-    html += '''
-            </table>
-        </div>
     </body>
     </html>
     '''
