@@ -6,6 +6,7 @@ import mysql.connector
 from django.conf import settings
 import django
 from django.core.management import execute_from_command_line
+from django.views.decorators.csrf import csrf_exempt
 
 def crear_conexion():
     try:
@@ -19,6 +20,7 @@ def crear_conexion():
         print(f"Error de conexión: '{err}'")
         return None
 
+@csrf_exempt
 def docente_view(request):
     mensaje_error = ""
     conexion = crear_conexion()
@@ -79,338 +81,122 @@ def docente_view(request):
         cursor.close()
         conexion.close()
 
-    html = f'''
-    <html>
-    <head>
-        <title>Lista de Docentes</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{
-                font-family: 'Segoe UI', Arial, sans-serif;
-                background: linear-gradient(135deg, #1565c0 0%, #42a5f5 100%);
-                margin: 0;
-                padding: 0;
-                min-height: 100vh;
-            }}
-            .container {{
-                max-width: 950px;
-                margin: 48px auto;
-                background: rgba(255,255,255,0.98);
-                border-radius: 28px;
-                box-shadow: 0 16px 40px 0 rgba(21,101,192,0.16), 0 2px 8px rgba(0,0,0,0.07);
-                padding: 48px 56px 56px 56px;
-                position: relative;
-                overflow: hidden;
-            }}
-            /* Eliminado el decorado de la esquina */
-            h2 {{
-                text-align: center;
-                color: #1565c0;
-                margin-bottom: 32px;
-                letter-spacing: 2px;
-                font-weight: 900;
-                font-size: 2.5rem;
-                text-shadow: 0 4px 16px #90caf9;
-                position: relative;
-                z-index: 1;
-            }}
-            .action-buttons {{
-                display: flex;
-                justify-content: center;
-                gap: 22px;
-                margin-bottom: 36px;
-                position: relative;
-                z-index: 1;
-            }}
-            .action-buttons button {{
-                padding: 16px 44px;
-                font-size: 1.18em;
-                border-radius: 14px;
-                border: none;
-                background: linear-gradient(90deg, #1565c0 60%, #42a5f5 100%);
-                color: #fff;
-                font-weight: 800;
-                cursor: pointer;
-                box-shadow: 0 2px 12px #90caf980;
-                transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-                letter-spacing: 1px;
-            }}
-            .action-buttons button:hover {{
-                background: linear-gradient(90deg, #0d47a1 60%, #1976d2 100%);
-                transform: translateY(-2px) scale(1.07);
-                box-shadow: 0 8px 24px #90caf980;
-            }}
-            table {{
-                border-collapse: separate;
-                border-spacing: 0 10px;
-                width: 100%;
-                background: #f7fbff;
-                border-radius: 18px;
-                overflow: hidden;
-                margin-bottom: 36px;
-                box-shadow: 0 2px 16px #90caf930;
-                position: relative;
-                z-index: 1;
-            }}
-            th, td {{
-                border: none;
-                padding: 16px 12px;
-                text-align: center;
-            }}
-            th {{
-                background: linear-gradient(90deg, #1565c0 0%, #42a5f5 100%);
-                color: #fff;
-                font-size: 1.13em;
-                letter-spacing: 0.7px;
-                font-weight: 800;
-            }}
-            tr:nth-child(even) {{
-                background: #e3f2fd;
-            }}
-            tr:hover td {{
-                background: #bbdefb;
-                transition: background 0.2s;
-            }}
-            .empty-msg {{
-                text-align: center;
-                color: #1976d2;
-                font-size: 1.2em;
-                margin: 30px 0 20px 0;
-                font-weight: 600;
-                letter-spacing: 1px;
-            }}
-            form {{
-                margin-top: 18px;
-            }}
-            #crear-form, #actualizar-form, #eliminar-form {{
-                display: none;
-                background: #e3f2fd;
-                border-radius: 18px;
-                box-shadow: 0 2px 12px #90caf950;
-                padding: 32px 22px 22px 22px;
-                margin: 0 auto 22px auto;
-                max-width: 700px;
-                position: relative;
-                z-index: 2;
-            }}
-            #crear-form h3, #actualizar-form h3, #eliminar-form h3 {{
-                color: #1565c0;
-                margin-bottom: 20px;
-                text-align: center;
-                font-weight: 900;
-                letter-spacing: 1.2px;
-                font-size: 1.3em;
-            }}
-            #crear-form input, #crear-form select,
-            #actualizar-form input, #actualizar-form select,
-            #eliminar-form select {{
-                margin: 9px 8px;
-                padding: 12px 16px;
-                border-radius: 9px;
-                border: 1.5px solid #90caf9;
-                font-size: 1.07em;
-                background: #fff;
-                transition: border 0.2s, box-shadow 0.2s;
-                color: #1565c0;
-                font-weight: 600;
-            }}
-            #crear-form input:focus, #actualizar-form input:focus, #crear-form select:focus, #actualizar-form select:focus {{
-                border: 1.5px solid #1565c0;
-                outline: none;
-                box-shadow: 0 0 8px #42a5f580;
-            }}
-            #crear-form button, #actualizar-form button {{
-                background: linear-gradient(90deg, #2ecc40 60%, #27ae60 100%);
-                color: #fff;
-                border: none;
-                padding: 14px 36px;
-                border-radius: 11px;
-                font-size: 1.09em;
-                font-weight: 800;
-                margin-top: 16px;
-                cursor: pointer;
-                transition: background 0.2s, transform 0.1s;
-                box-shadow: 0 2px 10px #27ae6040;
-                letter-spacing: 0.7px;
-            }}
-            #crear-form button:hover, #actualizar-form button:hover {{
-                background: linear-gradient(90deg, #27ae38 60%, #229954 100%);
-                transform: scale(1.07);
-            }}
-            #eliminar-form button {{
-                background: linear-gradient(90deg, #e74c3c 60%, #c0392b 100%);
-                color: #fff;
-                border: none;
-                padding: 14px 36px;
-                border-radius: 11px;
-                font-size: 1.09em;
-                font-weight: 800;
-                margin-top: 16px;
-                cursor: pointer;
-                transition: background 0.2s, transform 0.1s;
-                box-shadow: 0 2px 10px #c0392b40;
-                letter-spacing: 0.7px;
-            }}
-            #eliminar-form button:hover {{
-                background: linear-gradient(90deg, #c0392b 60%, #a93226 100%);
-                transform: scale(1.07);
-            }}
-            .error-msg {{
-                color: #fff;
-                background: linear-gradient(90deg, #e74c3c 60%, #c0392b 100%);
-                padding: 16px;
-                border-radius: 12px;
-                width: 95%;
-                margin: 24px auto 0 auto;
-                text-align: center;
-                font-size: 1.17em;
-                box-shadow: 0 2px 10px #c0392b40;
-                font-weight: 800;
-                letter-spacing: 0.7px;
-            }}
-            @media (max-width: 900px) {{
-                .container {{ padding: 10px 2vw; }}
-                table, th, td {{ font-size: 0.97em; }}
-                #crear-form, #actualizar-form, #eliminar-form {{ max-width: 98vw; }}
-            }}
-            @media (max-width: 600px) {{
-                .container {{ padding: 2vw 1vw; }}
-                h2 {{ font-size: 1.3rem; }}
-                .action-buttons button {{ padding: 10px 12px; font-size: 1em; }}
-                #crear-form, #actualizar-form, #eliminar-form {{ padding: 10px 2vw; }}
-            }}
-        </style>
-        <script>
-            function mostrarFormularioCrear() {{
-                document.getElementById('crear-form').style.display = 'block';
-                document.getElementById('actualizar-form').style.display = 'none';
-                document.getElementById('eliminar-form').style.display = 'none';
-                window.scrollTo(0, document.body.scrollHeight);
-            }}
-            function mostrarFormularioActualizar() {{
-                document.getElementById('actualizar-form').style.display = 'block';
-                document.getElementById('crear-form').style.display = 'none';
-                document.getElementById('eliminar-form').style.display = 'none';
-                window.scrollTo(0, document.body.scrollHeight);
-            }}
-            function mostrarFormularioEliminar() {{
-                document.getElementById('eliminar-form').style.display = 'block';
-                document.getElementById('crear-form').style.display = 'none';
-                document.getElementById('actualizar-form').style.display = 'none';
-                window.scrollTo(0, document.body.scrollHeight);
-            }}
-            function llenarFormularioActualizar() {{
-                var select = document.getElementById('docente-select');
-                var datos = select.value.split('|');
-                document.getElementById('upd_id').value = datos[0];
-                document.getElementById('upd_nombre').value = datos[1];
-                document.getElementById('upd_correo').value = datos[2];
-                document.getElementById('upd_area').value = datos[3];
-                document.getElementById('upd_modalidad').value = datos[4];
-            }}
-        </script>
-    </head>
-    <body>
-    <button class="volver-btn" type="button" onclick="window.location.href='/menu'"
-        style="
-            position:fixed;
-            top:24px;
-            left:24px;
-            max-width:140px;
-            z-index:1000;
-            padding: 14px 0;
-            width: 120px;
-            background: linear-gradient(90deg, #1565c0 0%, #42a5f5 100%);
-            color: white;
-            font-weight: 800;
-            border-radius: 28px;
-            box-shadow: 0 8px 28px rgba(21,101,192,0.18);
-            border: none;
-            font-size: 1rem;
-            letter-spacing: 0.04em;
-            cursor: pointer;
-            transition: background 0.3s, transform 0.2s, box-shadow 0.2s;
-        "
-        onmouseover="this.style.background='linear-gradient(90deg, #42a5f5 0%, #1565c0 100%)'; this.style.transform='translateY(-3px) scale(1.04)';"
-        onmouseout="this.style.background='linear-gradient(90deg, #1565c0 0%, #42a5f5 100%)'; this.style.transform='none';"
-    >Salir</button>
-    <div class="container" style="margin-top:40px;">
-        <h2>Lista de Docentes</h2>
-        <div class="action-buttons">
-            <button onclick="mostrarFormularioCrear()">Crear</button>
-            <button onclick="mostrarFormularioActualizar()">Actualizar</button>
-            <button onclick="mostrarFormularioEliminar()">Eliminar</button>
-        </div>
-        <table>
-            <tr>
-                <th>ID</th>
-                <th>Nombre</th>
-                <th>Correo</th>
-                <th>Área de Especialidad</th>
-                <th>Modalidad de Graduación</th>
-            </tr>
-    '''
+    header_html = (
+        "<th>nombre</th>"
+        "<th>correo</th>"
+        "<th>area_especialidad</th>"
+        "<th>modalidad_graduacion</th>"
+        "<th style='text-align:right;padding-right:22px'>ACCIONES</th>"
+    )
+
+    rows_html = ""
     for d in docentes:
-        html += f'''
-            <tr>
-                <td>{d[0]}</td>
-                <td>{d[1]}</td>
-                <td>{d[2]}</td>
-                <td>{d[3]}</td>
-                <td>{d[4]}</td>
-            </tr>
-        '''
-    html += '''
-        </table>
-        <form id="crear-form" method="post" >
-            <h3>Crear Nuevo Docente</h3>
-            <input type="text" name="nombre" placeholder="Nombre" required>
-            <input type="email" name="correo" placeholder="Correo" required>
-            <input type="text" name="area_especialidad" placeholder="Área de Especialidad" required>
-            <input type="text" name="modalidad_graduacion" placeholder="Modalidad de Graduación" required>
-            <button type="submit">Guardar</button>
-        </form>
-    '''
-    html += '''
-        <form id="actualizar-form" method="post" >
-            <h3>Actualizar Docente</h3>
-            <select id="docente-select" onchange="llenarFormularioActualizar()" required>
-                <option value="">Seleccione un docente</option>
-    '''
+        id_doc = d[0]
+        nombre = d[1] or ""
+        correo = d[2] or ""
+        area = d[3] or ""
+        modalidad = d[4] or ""
+
+        modalidad_text = str(modalidad)
+        if 'complet' in modalidad_text.lower():
+            badge_cls = 'green'
+        elif 'proceso' in modalidad_text.lower():
+            badge_cls = 'orange'
+        else:
+            badge_cls = 'red'
+
+        rows_html += (
+            "<tr>"
+            f"<td class='name-cell'>{nombre}</td>"
+            f"<td class='muted'>{correo}</td>"
+            f"<td class='muted'>{area}</td>"
+            f"<td><span class='status {badge_cls}'>{modalidad}</span></td>"
+            "<td>"
+            "<div class='actions' style='justify-content:flex-end;'>"
+            f"<button class='icon-btn edit-btn' onclick=\"document.getElementById('docente-select').value='{id_doc}|{nombre}|{correo}|{area}|{modalidad}'; togglePanel('actualizar-form')\" title='Editar'><span class='icon-small'>✎</span></button>"
+            f"<button class='icon-btn del-btn' onclick=\"document.getElementById('eliminar-select').value='{id_doc}'; togglePanel('eliminar-form')\" title='Eliminar'><span class='icon-small'>⛔</span></button>"
+            "</div>"
+            "</td>"
+            "</tr>"
+        )
+
+    options_html = ""
     for d in docentes:
-        html += f'<option value="{d[0]}|{d[1]}|{d[2]}|{d[3]}|{d[4]}">{d[1]} (ID:{d[0]})</option>'
-    html += '''
-            </select><br>
-            <input type="hidden" name="actualizar" value="1">
-            <input type="hidden" id="upd_id" name="id_docente">
-            <input type="text" id="upd_nombre" name="nombre" placeholder="Nombre" required>
-            <input type="email" id="upd_correo" name="correo" placeholder="Correo" required>
-            <input type="text" id="upd_area" name="area_especialidad" placeholder="Área de Especialidad" required>
-            <input type="text" id="upd_modalidad" name="modalidad_graduacion" placeholder="Modalidad de Graduación" required>
-            <button type="submit">Actualizar</button>
-        </form>
-    '''
-    html += '''
-        <form id="eliminar-form" method="post">
-            <h3>Eliminar Docente</h3>
-            <input type="hidden" name="eliminar" value="1">
-            <select name="id_docente" required>
-                <option value="">Seleccione un docente</option>
-    '''
-    for d in docentes:
-        html += f'<option value="{d[0]}">{d[1]} (ID:{d[0]})</option>'
-    html += '''
-            </select>
-            <button type="submit">Eliminar</button>
-        </form>
-        '''
-    if mensaje_error:
-        html += f'<div class="error-msg">{mensaje_error}</div>'
-    html += '''
-        </div>
-    </body>
-    </html>
-    '''
+        options_html += f"<option value='{d[0]}'>{d[1]} (ID:{d[0]})</option>\n"
+
+    html = (
+        "<!doctype html>"
+        "<html>"
+        "<head>"
+        "<meta charset='utf-8'>"
+        "<title>Lista de Docentes</title>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<style>"
+        ":root{--nav:#0b3b65;--nav-deco:#123a59;--accent:#1e73be;--card:#ffffff;--muted:#6b7b8c;--green:#36a64f;--orange:#ff8a00;--red:#d6453b;--shadow: 0 18px 36px rgba(9,30,66,0.12);}"
+        "*{box-sizing:border-box} body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background: linear-gradient(180deg,#edf2f6 0%, #dfe8f2 100%);color:#223;}"
+        ".topbar{background:linear-gradient(180deg,var(--nav) 0%, var(--nav-deco) 100%);color:#fff;padding:22px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow: 0 6px 18px rgba(11,59,101,0.14);} "
+        ".topbar .title{font-weight:800;font-size:28px;letter-spacing:0.6px;} .topbar .back-btn{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.12);padding:10px 14px;border-radius:10px;display:inline-flex;gap:10px;align-items:center;text-decoration:none;}"
+        ".page{max-width:1180px;margin:34px auto;padding:0 22px}.card{background:var(--card);border-radius:14px;padding:20px;box-shadow:var(--shadow);overflow:hidden}.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 6px 20px 6px}"
+        ".create-btn{background:linear-gradient(180deg,var(--nav) 0%, var(--accent) 100%);color:#fff;padding:10px 16px;border-radius:10px;border:none;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:10px}"
+        ".table-wrap{margin-top:6px} table.docs{width:100%;border-collapse:separate;border-spacing:0;border-radius:12px;overflow:hidden}"
+        "table.docs thead th{background:var(--nav);color:#fff;padding:18px 14px;text-align:left;font-weight:800;font-size:13px}"
+        "table.docs tbody td{padding:18px 14px;color:#243241;border-bottom:1px solid #eef3f7;vertical-align:middle}"
+        ".name-cell{font-weight:800;color:#17385d}.muted{color:var(--muted);font-weight:600;font-size:0.95rem}"
+        ".status{display:inline-block;padding:8px 12px;border-radius:999px;color:#fff;font-weight:800;font-size:0.86rem}"
+        ".status.green{background:var(--green)}.status.orange{background:var(--orange)}.status.red{background:var(--red)}"
+        ".actions{display:flex;gap:10px}.icon-btn{width:42px;height:42px;border-radius:8px;border:none;display:inline-flex;align-items:center;justify-content:center;color:#fff;cursor:pointer}"
+        ".edit-btn{background:#8d5b38}.del-btn{background:#d23b3b}.icon-small{font-size:16px}"
+        ".form-panel{margin-top:18px;display:none;background:#f7fbff;padding:18px;border-radius:10px}.form-row{display:flex;gap:12px;flex-wrap:wrap}.form-row input,.form-row select{padding:10px;border-radius:8px;border:1px solid #d7e7f4}"
+        ".form-actions{margin-top:10px;display:flex;gap:10px}.btn-save{background:var(--green);color:#fff;border:none;padding:10px 14px;border-radius:8px}.btn-cancel{background:#fff;color:var(--nav);border:1px solid #d2e6fb;padding:10px 14px;border-radius:8px}"
+        ".error-msg{margin-top:14px;padding:12px;border-radius:10px;background:linear-gradient(90deg,#d6453b,#ff6b6b);color:#fff}"
+        "</style>"
+        "<script>"
+        "function togglePanel(id){var panels=['crear-form','actualizar-form','eliminar-form'];panels.forEach(function(p){document.getElementById(p).style.display=(p===id)?'block':'none';});setTimeout(function(){var el=document.getElementById(id); if(el) window.scrollTo({top:el.offsetTop-80,behavior:'smooth'});},200);}"
+        "function llenarFormularioActualizar(){var sel=document.getElementById('docente-select'); if(!sel.value) return; var parts=sel.value.split('|'); document.getElementById('upd_id').value=parts[0]||''; document.getElementById('upd_nombre').value=parts[1]||''; document.getElementById('upd_correo').value=parts[2]||''; document.getElementById('upd_area').value=parts[3]||''; document.getElementById('upd_modalidad').value=parts[4]||'';}"
+        "</script>"
+        "</head>"
+        "<body>"
+        "<div class='topbar'><a class='back-btn' href='/menu'>&larr; Volver al Menú</a><div style='flex:1'></div><div class='title' style='text-align:right'>Lista de Docentes</div></div>"
+        "<div class='page'><div class='card'>"
+        "<div class='card-header'><div></div><div style='margin-left:auto'><button class='create-btn' onclick=\"togglePanel('crear-form')\"><span style='font-size:18px;font-weight:900;'>+</span> Crear Nuevo Registro</button></div></div>"
+        "<div class='table-wrap'><table class='docs' role='table'><thead><tr>"
+        + header_html +
+        "</tr></thead><tbody>"
+        + rows_html +
+        "</tbody></table></div>"
+        "<form id='crear-form' class='form-panel' method='post'>"
+        "<h3 style='margin:0;color:var(--nav)'>Crear Nuevo Docente</h3>"
+        "<div class='form-row' style='margin-top:12px;'>"
+        "<input type='text' name='nombre' placeholder='Nombre' required>"
+        "<input type='email' name='correo' placeholder='Correo' required>"
+        "<input type='text' name='area_especialidad' placeholder='Área de Especialidad' required>"
+        "<input type='text' name='modalidad_graduacion' placeholder='Modalidad de Graduación' required>"
+        "</div><div class='form-actions'><button class='btn-save' type='submit'>Guardar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('crear-form').style.display='none'\">Cancelar</button></div></form>"
+        "<form id='actualizar-form' class='form-panel' method='post'>"
+        "<h3 style='margin:0;color:var(--nav)'>Actualizar Docente</h3>"
+        "<div class='form-row' style='margin-top:12px;'>"
+        "<select id='docente-select' name='id_docente' onchange='llenarFormularioActualizar()'>"
+        "<option value=''>Seleccione un docente</option>"
+        + "".join([f"<option value='{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}'>{row[1]} (ID:{row[0]})</option>" for row in docentes]) +
+        "</select></div>"
+        "<input type='hidden' name='actualizar' value='1'>"
+        "<input type='hidden' id='upd_id' name='id_docente'>"
+        "<div class='form-row' style='margin-top:12px;'>"
+        "<input type='text' id='upd_nombre' name='nombre' placeholder='Nombre' required>"
+        "<input type='email' id='upd_correo' name='correo' placeholder='Correo' required>"
+        "<input type='text' id='upd_area' name='area_especialidad' placeholder='Área de Especialidad' required>"
+        "<input type='text' id='upd_modalidad' name='modalidad_graduacion' placeholder='Modalidad de Graduación' required>"
+        "</div><div class='form-actions'><button class='btn-save' type='submit'>Actualizar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('actualizar-form').style.display='none'\">Cerrar</button></div></form>"
+        "<form id='eliminar-form' class='form-panel' method='post'>"
+        "<h3 style='margin:0;color:var(--nav)'>Eliminar Docente</h3>"
+        "<div class='form-row' style='margin-top:12px;'>"
+        "<input type='hidden' name='eliminar' value='1'>"
+        f"<select id='eliminar-select' name='id_docente' required><option value=''>Seleccione un docente</option>{options_html}</select>"
+        "</div><div class='form-actions'><button class='btn-save' type='submit' style='background:var(--red)'>Eliminar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('eliminar-form').style.display='none'\">Cancelar</button></div></form>"
+        + (f"<div class='error-msg'>{mensaje_error}</div>" if mensaje_error else "")
+        + "</div></div></body></html>"
+    )
+
     return HttpResponse(html)
 
 if __name__ == "__main__":
@@ -453,12 +239,8 @@ if __name__ == "__main__":
     urlpatterns = [
         path('', docente_view),
         path('docentes/', docente_view),
-        path('crear_docente/', lambda request: HttpResponse('<h1>Página para crear docente</h1>')),
-        path('actualizar_docente/', lambda request: HttpResponse('<h1>Página para actualizar docente</h1>')),
-        path('eliminar_docente/', lambda request: HttpResponse('<h1>Página para eliminar docente</h1>')),
     ]
 
-    from django.urls import include
     settings.ROOT_URLCONF = __name__
 
     from django.core.wsgi import get_wsgi_application
