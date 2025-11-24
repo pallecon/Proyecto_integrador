@@ -18,6 +18,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.shortcuts import redirect
 from django.views.generic import RedirectView
 import json
+import reportes
 
 
 try:
@@ -1807,7 +1808,7 @@ urlpatterns = [
     path('seguimiento', seguimiento_view),
     path('registro', registro_view),
     path('dashboard', dashboard_view),
-    path('reportes', lambda request: HttpResponse('<h1>Reportes</h1>')),
+    path('reportes', reportes.reportes_view, name='reportes'),
     path('monitoreo_titulacion', monitoreo_titulacion_view),
     path('detalles_estudiante', detalles_estudiantes_view),
     path('nueva_gestion', lambda request: HttpResponse('<h1>Página de Nueva Gestión</h1>')),
