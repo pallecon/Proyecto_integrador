@@ -3,10 +3,13 @@ import sys
 from django.http import HttpResponse
 from django.urls import path
 import mysql.connector
+from mysql.connector import Error
 from django.conf import settings
 import django
 from django.core.management import execute_from_command_line
 from django.views.decorators.csrf import csrf_exempt
+
+ESTUDIANTES_POR_PAGINA = 10
 
 def crear_conexion():
     try:
@@ -23,11 +26,23 @@ def crear_conexion():
 @csrf_exempt
 def docente_view(request):
     mensaje_error = ""
+    docentes = []
+    
+    try:
+        pagina_actual = int(request.GET.get('page', 1))
+    except ValueError:
+        pagina_actual = 1
+        
+    termino_busqueda = request.GET.get('q', '').strip() 
+    total_paginas = 0
+    total_docentes = 0 
+    
     conexion = crear_conexion()
-    if not conexion:
+    if conexion is None:
         return HttpResponse("<h2>Error de conexión a la base de datos.</h2>")
 
     cursor = conexion.cursor()
+    
     try:
         if request.method == "POST":
             if request.POST.get("actualizar") == "1":
@@ -48,14 +63,8 @@ def docente_view(request):
                         mensaje_error = "Error: El correo ingresado ya existe."
                 else:
                     mensaje_error = "Todos los campos son obligatorios para actualizar."
-            elif request.POST.get("eliminar") == "1":
-                id_docente = request.POST.get("id_docente")
-                if id_docente:
-                    cursor.execute("DELETE FROM Docentes WHERE id_docente=%s", (id_docente,))
-                    conexion.commit()
-                else:
-                    mensaje_error = "Debe seleccionar un docente para eliminar."
-            else:
+            
+            else: 
                 nombre = request.POST.get("nombre")
                 correo = request.POST.get("correo")
                 area_especialidad = request.POST.get("area_especialidad")
@@ -72,132 +81,424 @@ def docente_view(request):
                 else:
                     mensaje_error = "Todos los campos son obligatorios para crear."
 
-        cursor.execute("""
+        
+        sql_count = "SELECT COUNT(*) FROM Docentes d"
+        params = []
+        
+        if termino_busqueda:
+            sql_count += " WHERE d.nombre LIKE %s OR d.correo LIKE %s OR d.area_especialidad LIKE %s"
+            like_term = f"%{termino_busqueda}%"
+            params = [like_term, like_term, like_term]
+        
+        cursor.execute(sql_count, tuple(params))
+        total_docentes = cursor.fetchone()[0]
+        
+        total_paginas = (total_docentes + ESTUDIANTES_POR_PAGINA - 1) // ESTUDIANTES_POR_PAGINA
+        
+        if pagina_actual < 1:
+            pagina_actual = 1
+        elif pagina_actual > total_paginas and total_paginas > 0:
+            pagina_actual = total_paginas
+        elif total_docentes == 0:
+            pagina_actual = 0
+            
+        offset = (pagina_actual - 1) * ESTUDIANTES_POR_PAGINA if pagina_actual > 0 else 0
+        
+        sql_select = """
             SELECT id_docente, nombre, correo, area_especialidad, modalidad_graduacion
-            FROM Docentes
-        """)
+            FROM Docentes d
+        """
+        
+        select_params = list(params) 
+        
+        if termino_busqueda:
+             sql_select += " WHERE d.nombre LIKE %s OR d.correo LIKE %s OR d.area_especialidad LIKE %s"
+             
+        sql_select += " LIMIT %s OFFSET %s"
+        select_params.append(ESTUDIANTES_POR_PAGINA)
+        select_params.append(offset)
+
+        cursor.execute(sql_select, tuple(select_params))
         docentes = cursor.fetchall()
+
+    except Exception as e:
+        mensaje_error = f"Error al consultar o modificar la base de datos: {e}"
+        print("Error en docente_view:", e)
     finally:
-        cursor.close()
-        conexion.close()
+        if cursor: cursor.close()
+        if conexion: conexion.close()
 
-    header_html = (
-        "<th>nombre</th>"
-        "<th>correo</th>"
-        "<th>area_especialidad</th>"
-        "<th>modalidad_graduacion</th>"
-        "<th style='text-align:right;padding-right:22px'>ACCIONES</th>"
-    )
+    data_paginacion = {
+        'total_paginas': total_paginas,
+        'pagina_actual': pagina_actual,
+        'termino_busqueda': termino_busqueda,
+       
+        'path_base': request.path.rstrip('/')
+    }
+    
+    
+    html = f'''
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Gestión de Docentes</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            :root {{
+                --primary: #0b3b65; --primary-dark: #123a59; --accent: #1e73be;
+                --muted: #6b7280; --success: #43a047; --danger: #ef5350;
+                --bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+                --shadow-lg: 0 8px 24px rgba(0,0,0,0.25);
+            }}
+            body {{
+                font-family: 'Inter', sans-serif;
+                background: var(--bg);
+                color: #0a1929;
+                min-height: 100vh;
+                line-height: 1.6;
+            }}
+            .top-bar {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+                padding: 16px 28px;
+                box-shadow: var(--shadow-lg);
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                gap: 20px;
+            }}
+            .back-button {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                background: rgba(255,255,255,0.12);
+                color: #fff;
+                padding: 10px 18px;
+                border-radius: 8px;
+                border: 2px solid rgba(255,255,255,0.18);
+                cursor: pointer;
+                font-weight: 600;
+                transition: all 0.25s;
+                text-decoration: none;
+            }}
+            .back-button:hover {{ transform: translateX(-4px); background: rgba(255,255,255,0.18); }}
+            .top-title {{
+                color: #ffffff;
+                font-size: 1.6rem;
+                font-weight: 700;
+                margin: 0;
+                letter-spacing: 0.6px;
+                text-align: center; 
+                flex: 1;
+            }}
+            .container {{
+                max-width: 1200px;
+                margin: 28px auto;
+                padding: 24px;
+            }}
+            .action-buttons {{
+                display: flex;
+                justify-content: flex-end;
+                margin-bottom: 20px;
+                gap: 12px;
+            }}
+            .btn {{
+                padding: 10px 20px;
+                border-radius: 8px;
+                border: none;
+                cursor: pointer;
+                font-weight: 700;
+                color: white;
+                background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+                box-shadow: 0 6px 18px rgba(15,52,96,0.18);
+                transition: background 0.2s;
+            }}
+            .tabla-wrapper {{
+                background: #ffffff;
+                border-radius: 12px;
+                box-shadow: var(--shadow-lg);
+                overflow: hidden;
+            }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            thead {{ background: linear-gradient(135deg, #0f3460 0%, #1e5a96 100%); color: #fff; }}
+            th {{ padding: 14px 12px; text-align: left; font-weight: 700; font-size: 0.9rem; }}
+            td {{ padding: 12px; border-bottom: 1px solid #f0f2f5; font-size: 0.95rem; color: #0a1929; }}
+            tr:hover td {{ background: #fbfdff; transform: translateY(0); }}
+            
+            .btn-edit {{ 
+                border-radius:8px; padding:8px 12px; border: none; cursor:pointer; 
+                color: #fff; font-weight: 700; font-size: 1.1em;
+                background: #8d5b38; 
+            }}
+            .btn-edit:hover {{
+                background: #a67c52;
+            }}
+            .error-msg {{ background: linear-gradient(90deg, #fee2e2 0%, #fecaca 100%); color: #991b1b; padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; font-weight:700; }}
+            
+            .modal-container {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: none;
+                justify-content: center;
+                align-items: center;
+                z-index: 1000;
+                transition: opacity 0.3s ease-in-out;
+                opacity: 0;
+            }}
+            .modal-container.active {{
+                opacity: 1;
+                display: flex;
+            }}
+            .modal-content {{
+                background: #ffffff;
+                padding: 30px;
+                border-radius: 12px;
+                box-shadow: var(--shadow-lg);
+                max-width: 600px;
+                width: 90%;
+                transform: translateY(-50px);
+                transition: transform 0.3s ease-in-out;
+            }}
+            .modal-container.active .modal-content {{
+                transform: translateY(0);
+            }}
+            .form-row {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }}
+            .form-row input, .form-row select {{ flex: 1; padding:10px 12px; border:1.5px solid #e6eef8; border-radius:8px; min-width:160px; }}
+            .form-buttons {{ display:flex; gap:10px; justify-content:center; margin-top:12px; }}
+        </style>
+    </head>
+    <body>
+        <div class="top-bar">
+            <a class="back-button" href="/menu">
+                <i class="fas fa-arrow-left"></i>
+                Volver al Menú
+            </a>
+            <h1 class="top-title">Gestión de Docentes</h1>
+            <div style="width: 160px;"></div> 
+        </div>
 
-    rows_html = ""
-    for d in docentes:
-        id_doc = d[0]
-        nombre = d[1] or ""
-        correo = d[2] or ""
-        area = d[3] or ""
-        modalidad = d[4] or ""
+        <div class="container">
+            <div class="action-buttons">
+                <input type="text" id="buscar_input" placeholder="Escribir..." style="padding:10px 12px; border-radius:8px; border:1.5px solid #e6eef8; min-width:250px;">
+                <button class="btn" onclick="buscarDocente()"><i class="fas fa-search"></i> Buscar</button>
+                <button class="btn" onclick="mostrarModalCrear()"><i class="fas fa-plus"></i> Crear Nuevo Registro</button>
+            </div>
 
-        modalidad_text = str(modalidad)
-        if 'complet' in modalidad_text.lower():
-            badge_cls = 'green'
-        elif 'proceso' in modalidad_text.lower():
-            badge_cls = 'orange'
-        else:
-            badge_cls = 'red'
+            <div class="tabla-wrapper">
+                <div style="padding:18px;">
+                    '''
+    if mensaje_error:
+        html += f'<div class="error-msg">{mensaje_error}</div>'
 
-        rows_html += (
-            "<tr>"
-            f"<td class='name-cell'>{nombre}</td>"
-            f"<td class='muted'>{correo}</td>"
-            f"<td class='muted'>{area}</td>"
-            f"<td><span class='status {badge_cls}'>{modalidad}</span></td>"
-            "<td>"
-            "<div class='actions' style='justify-content:flex-end;'>"
-            f"<button class='icon-btn edit-btn' onclick=\"document.getElementById('docente-select').value='{id_doc}|{nombre}|{correo}|{area}|{modalidad}'; togglePanel('actualizar-form')\" title='Editar'><span class='icon-small'>✎</span></button>"
-            f"<button class='icon-btn del-btn' onclick=\"document.getElementById('eliminar-select').value='{id_doc}'; togglePanel('eliminar-form')\" title='Eliminar'><span class='icon-small'>⛔</span></button>"
-            "</div>"
-            "</td>"
-            "</tr>"
-        )
+    html += '''
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>Correo</th>
+                                <th>Área de Especialidad</th>
+                                <th>Modalidad de Graduación</th>
+                                <th style="text-align:center;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+    '''
+    if docentes:
+        for d in docentes:
+            id_doc = str(d[0])
+            nombre = str(d[1] or "").replace("'", "\\'")
+            correo = str(d[2] or "").replace("'", "\\'")
+            area = str(d[3] or "").replace("'", "\\'")
+            modalidad = str(d[4] or "").replace("'", "\\'")
 
-    options_html = ""
-    for d in docentes:
-        options_html += f"<option value='{d[0]}'>{d[1]} (ID:{d[0]})</option>\n"
+            modalidad_display = d[4] or ""
+            
+            html += f'''
+                                <tr>
+                                    <td>{d[1] or ""}</td>
+                                    <td>{d[2] or ""}</td>
+                                    <td>{d[3] or ""}</td>
+                                    <td>{modalidad_display}</td> <td style="text-align:center;">
+                                    <button class="btn-edit" onclick="editarRegistro('{id_doc}', '{nombre}', '{correo}', '{area}', '{modalidad}')" title="Editar">✏️</button>
+                                    </td>
+                                </tr>
+            '''
+    else:
+        html += '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted);">No hay docentes registrados.</td></tr>'
 
-    html = (
-        "<!doctype html>"
-        "<html>"
-        "<head>"
-        "<meta charset='utf-8'>"
-        "<title>Lista de Docentes</title>"
-        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<style>"
-        ":root{--nav:#0b3b65;--nav-deco:#123a59;--accent:#1e73be;--card:#ffffff;--muted:#6b7b8c;--green:#36a64f;--orange:#ff8a00;--red:#d6453b;--shadow: 0 18px 36px rgba(9,30,66,0.12);}"
-        "*{box-sizing:border-box} body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background: linear-gradient(180deg,#edf2f6 0%, #dfe8f2 100%);color:#223;}"
-        ".topbar{background:linear-gradient(180deg,var(--nav) 0%, var(--nav-deco) 100%);color:#fff;padding:22px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow: 0 6px 18px rgba(11,59,101,0.14);} "
-        ".topbar .title{font-weight:800;font-size:28px;letter-spacing:0.6px;} .topbar .back-btn{background:transparent;color:#fff;border:1px solid rgba(255,255,255,0.12);padding:10px 14px;border-radius:10px;display:inline-flex;gap:10px;align-items:center;text-decoration:none;}"
-        ".page{max-width:1180px;margin:34px auto;padding:0 22px}.card{background:var(--card);border-radius:14px;padding:20px;box-shadow:var(--shadow);overflow:hidden}.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 6px 20px 6px}"
-        ".create-btn{background:linear-gradient(180deg,var(--nav) 0%, var(--accent) 100%);color:#fff;padding:10px 16px;border-radius:10px;border:none;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:10px}"
-        ".table-wrap{margin-top:6px} table.docs{width:100%;border-collapse:separate;border-spacing:0;border-radius:12px;overflow:hidden}"
-        "table.docs thead th{background:var(--nav);color:#fff;padding:18px 14px;text-align:left;font-weight:800;font-size:13px}"
-        "table.docs tbody td{padding:18px 14px;color:#243241;border-bottom:1px solid #eef3f7;vertical-align:middle}"
-        ".name-cell{font-weight:800;color:#17385d}.muted{color:var(--muted);font-weight:600;font-size:0.95rem}"
-        ".status{display:inline-block;padding:8px 12px;border-radius:999px;color:#fff;font-weight:800;font-size:0.86rem}"
-        ".status.green{background:var(--green)}.status.orange{background:var(--orange)}.status.red{background:var(--red)}"
-        ".actions{display:flex;gap:10px}.icon-btn{width:42px;height:42px;border-radius:8px;border:none;display:inline-flex;align-items:center;justify-content:center;color:#fff;cursor:pointer}"
-        ".edit-btn{background:#8d5b38}.del-btn{background:#d23b3b}.icon-small{font-size:16px}"
-        ".form-panel{margin-top:18px;display:none;background:#f7fbff;padding:18px;border-radius:10px}.form-row{display:flex;gap:12px;flex-wrap:wrap}.form-row input,.form-row select{padding:10px;border-radius:8px;border:1px solid #d7e7f4}"
-        ".form-actions{margin-top:10px;display:flex;gap:10px}.btn-save{background:var(--green);color:#fff;border:none;padding:10px 14px;border-radius:8px}.btn-cancel{background:#fff;color:var(--nav);border:1px solid #d2e6fb;padding:10px 14px;border-radius:8px}"
-        ".error-msg{margin-top:14px;padding:12px;border-radius:10px;background:linear-gradient(90deg,#d6453b,#ff6b6b);color:#fff}"
-        "</style>"
-        "<script>"
-        "function togglePanel(id){var panels=['crear-form','actualizar-form','eliminar-form'];panels.forEach(function(p){document.getElementById(p).style.display=(p===id)?'block':'none';});setTimeout(function(){var el=document.getElementById(id); if(el) window.scrollTo({top:el.offsetTop-80,behavior:'smooth'});},200);}"
-        "function llenarFormularioActualizar(){var sel=document.getElementById('docente-select'); if(!sel.value) return; var parts=sel.value.split('|'); document.getElementById('upd_id').value=parts[0]||''; document.getElementById('upd_nombre').value=parts[1]||''; document.getElementById('upd_correo').value=parts[2]||''; document.getElementById('upd_area').value=parts[3]||''; document.getElementById('upd_modalidad').value=parts[4]||'';}"
-        "</script>"
-        "</head>"
-        "<body>"
-        "<div class='topbar'><a class='back-btn' href='/menu'>&larr; Volver al Menú</a><div style='flex:1'></div><div class='title' style='text-align:right'>Lista de Docentes</div></div>"
-        "<div class='page'><div class='card'>"
-        "<div class='card-header'><div></div><div style='margin-left:auto'><button class='create-btn' onclick=\"togglePanel('crear-form')\"><span style='font-size:18px;font-weight:900;'>+</span> Crear Nuevo Registro</button></div></div>"
-        "<div class='table-wrap'><table class='docs' role='table'><thead><tr>"
-        + header_html +
-        "</tr></thead><tbody>"
-        + rows_html +
-        "</tbody></table></div>"
-        "<form id='crear-form' class='form-panel' method='post'>"
-        "<h3 style='margin:0;color:var(--nav)'>Crear Nuevo Docente</h3>"
-        "<div class='form-row' style='margin-top:12px;'>"
-        "<input type='text' name='nombre' placeholder='Nombre' required>"
-        "<input type='email' name='correo' placeholder='Correo' required>"
-        "<input type='text' name='area_especialidad' placeholder='Área de Especialidad' required>"
-        "<input type='text' name='modalidad_graduacion' placeholder='Modalidad de Graduación' required>"
-        "</div><div class='form-actions'><button class='btn-save' type='submit'>Guardar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('crear-form').style.display='none'\">Cancelar</button></div></form>"
-        "<form id='actualizar-form' class='form-panel' method='post'>"
-        "<h3 style='margin:0;color:var(--nav)'>Actualizar Docente</h3>"
-        "<div class='form-row' style='margin-top:12px;'>"
-        "<select id='docente-select' name='id_docente' onchange='llenarFormularioActualizar()'>"
-        "<option value=''>Seleccione un docente</option>"
-        + "".join([f"<option value='{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}'>{row[1]} (ID:{row[0]})</option>" for row in docentes]) +
-        "</select></div>"
-        "<input type='hidden' name='actualizar' value='1'>"
-        "<input type='hidden' id='upd_id' name='id_docente'>"
-        "<div class='form-row' style='margin-top:12px;'>"
-        "<input type='text' id='upd_nombre' name='nombre' placeholder='Nombre' required>"
-        "<input type='email' id='upd_correo' name='correo' placeholder='Correo' required>"
-        "<input type='text' id='upd_area' name='area_especialidad' placeholder='Área de Especialidad' required>"
-        "<input type='text' id='upd_modalidad' name='modalidad_graduacion' placeholder='Modalidad de Graduación' required>"
-        "</div><div class='form-actions'><button class='btn-save' type='submit'>Actualizar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('actualizar-form').style.display='none'\">Cerrar</button></div></form>"
-        "<form id='eliminar-form' class='form-panel' method='post'>"
-        "<h3 style='margin:0;color:var(--nav)'>Eliminar Docente</h3>"
-        "<div class='form-row' style='margin-top:12px;'>"
-        "<input type='hidden' name='eliminar' value='1'>"
-        f"<select id='eliminar-select' name='id_docente' required><option value=''>Seleccione un docente</option>{options_html}</select>"
-        "</div><div class='form-actions'><button class='btn-save' type='submit' style='background:var(--red)'>Eliminar</button><button type='button' class='btn-cancel' onclick=\"document.getElementById('eliminar-form').style.display='none'\">Cancelar</button></div></form>"
-        + (f"<div class='error-msg'>{mensaje_error}</div>" if mensaje_error else "")
-        + "</div></div></body></html>"
-    )
+    html += '''
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+    '''
+    
+    paginacion_html = '<div style="display:flex; justify-content:center; align-items:center; margin-top: 20px; gap: 20px; font-weight: 500;">'
+    
+    base_query = f'?q={data_paginacion["termino_busqueda"]}&page=' if data_paginacion["termino_busqueda"] else '?page='
+    
+   
+    url_base = data_paginacion['path_base'] + base_query 
 
+    
+    if data_paginacion["pagina_actual"] > 1:
+        url_anterior = url_base + str(data_paginacion["pagina_actual"] - 1)
+        paginacion_html += f'<a href="{url_anterior}" class="btn" style="padding: 8px 15px; text-decoration: none; background:var(--primary); color:#fff;"><i class="fas fa-chevron-left"></i> Anterior</a>'
+    else:
+        paginacion_html += f'<span style="padding: 8px 15px; background:#e0e0e0; color:#9e9e9e; cursor:not-allowed; border-radius: 8px;">Anterior</span>'
+
+
+    
+    if data_paginacion["total_paginas"] > 0:
+        paginacion_html += f'<span style="font-size: 1.1em; color: var(--primary);">Página {data_paginacion["pagina_actual"]} de {data_paginacion["total_paginas"]}</span>'
+
+
+    
+    if data_paginacion["pagina_actual"] < data_paginacion["total_paginas"]:
+        url_siguiente = url_base + str(data_paginacion["pagina_actual"] + 1)
+        paginacion_html += f'<a href="{url_siguiente}" class="btn" style="padding: 8px 15px; text-decoration: none; background:var(--primary); color:#fff;">Siguiente <i class="fas fa-chevron-right"></i></a>'
+    else:
+        paginacion_html += f'<span style="padding: 8px 15px; background:#e0e0e0; color:#9e9e9e; cursor:not-allowed; border-radius: 8px;">Siguiente</span>'
+
+
+    paginacion_html += '</div>'
+    
+    html += paginacion_html
+    
+    
+    html += '''
+        </div>
+        
+        <div class="modal-container" id="modal-crear" onclick="cerrarModal()">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <form id="crear-form" method="post">
+                    <h3 style="margin-top:0; color:var(--primary); text-align:center;">Crear Nuevo Docente</h3>
+                    <div class="form-row">
+                        <input type="text" name="nombre" placeholder="Nombre Completo" required>
+                        <input type="email" name="correo" placeholder="Correo Electrónico" required>
+                    </div>
+                    <div class="form-row">
+                        <input type="text" name="area_especialidad" placeholder="Área de Especialidad" required>
+                        <input type="text" name="modalidad_graduacion" placeholder="Modalidad de Graduación" required>
+                    </div>
+                    <div class="form-buttons">
+                        <button type="button" class="btn" onclick="cerrarModal()" style="background:#9e9e9e;">Cancelar</button>
+                        <button type="submit" class="btn">Guardar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="modal-container" id="modal-actualizar" onclick="cerrarModal()">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <form id="actualizar-form" method="post">
+                    <h3 style="margin-top:0; color:var(--primary); text-align:center;">Actualizar Docente</h3>
+                    <input type="hidden" name="actualizar" value="1">
+                    <input type="hidden" id="upd_id" name="id_docente">
+                    <div class="form-row">
+                        <input type="text" id="upd_nombre" name="nombre" placeholder="Nombre Completo" required>
+                        <input type="email" id="upd_correo" name="correo" placeholder="Correo Electrónico" required>
+                    </div>
+                    <div class="form-row">
+                        <input type="text" id="upd_area" name="area_especialidad" placeholder="Área de Especialidad" required>
+                        <input type="text" id="upd_modalidad" name="modalidad_graduacion" placeholder="Modalidad de Graduación" required>
+                    </div>
+                    <div class="form-buttons">
+                        <button type="button" class="btn" onclick="cerrarModal()" style="background:#9e9e9e;">Cancelar</button>
+                        <button type="submit" class="btn">Actualizar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <script>
+    
+    function showModal(id) {
+        if (id === 'modal-crear') {
+            document.getElementById('crear-form').reset();
+        }
+
+        document.getElementById('modal-crear').classList.remove('active');
+        document.getElementById('modal-actualizar').classList.remove('active');
+        
+        document.getElementById('modal-crear').style.display = 'none';
+        document.getElementById('modal-actualizar').style.display = 'none';
+
+        const modal = document.getElementById(id);
+        modal.style.display = 'flex';
+        setTimeout(function() {
+            modal.classList.add('active');
+        }, 10);
+    }
+
+    function cerrarModal() {
+        document.getElementById('modal-crear').classList.remove('active');
+        document.getElementById('modal-actualizar').classList.remove('active');
+        
+        setTimeout(function() {
+            document.getElementById('modal-crear').style.display = 'none';
+            document.getElementById('modal-actualizar').style.display = 'none';
+        }, 300);
+    }
+    
+    function mostrarModalCrear() {
+        showModal('modal-crear');
+    }
+
+    function editarRegistro(id, nombre, correo, area, modalidad) {
+        document.getElementById('upd_id').value = id;
+        document.getElementById('upd_nombre').value = nombre;
+        document.getElementById('upd_correo').value = correo;
+        document.getElementById('upd_area').value = area;
+        document.getElementById('upd_modalidad').value = modalidad;
+        
+        showModal('modal-actualizar');
+    }
+    
+    function buscarDocente() {
+        var input = document.getElementById('buscar_input').value.trim();
+        const currentPath = window.location.pathname;
+        
+        let newUrl = currentPath;
+        if (input) {
+            newUrl += '?q=' + encodeURIComponent(input);
+        }
+        window.location.href = newUrl;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const query = urlParams.get('q');
+        if (query) {
+            document.getElementById('buscar_input').value = query;
+        }
+    });
+</script>
+    </body>
+    
+    </html>
+    '''
     return HttpResponse(html)
+
+
+urlpatterns = [
+    
+    path('', docente_view),
+    
+    
+    path('lista_docentes/', docente_view),
+    path('lista_docentes', docente_view),
+]
 
 if __name__ == "__main__":
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -208,13 +509,13 @@ if __name__ == "__main__":
         settings.configure(
             DEBUG=DEBUG,
             SECRET_KEY=SECRET_KEY,
-            ROOT_URLCONF=__name__,
+            ROOT_URLCONF=sys.modules[__name__], 
             ALLOWED_HOSTS=['*'],
             INSTALLED_APPS=[
                 'django.contrib.contenttypes',
                 'django.contrib.staticfiles',
             ],
-            MIDDLEWARE=[],
+            MIDDLEWARE = [],
             TEMPLATES=[
                 {
                     'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -224,24 +525,18 @@ if __name__ == "__main__":
                         'context_processors': [
                             'django.template.context_processors.debug',
                             'django.template.context_processors.request',
-                            'django.contrib.auth.context_processors.auth',
-                            'django.contrib.messages.context_processors.messages',
                         ],
                     },
                 },
             ],
             STATIC_URL='/static/',
             STATICFILES_DIRS=[os.path.join(BASE_DIR, 'static')],
-            USE_TZ=True,
-            TIME_ZONE='America/La_Paz',
+            USE_TZ = True,
+            TIME_ZONE = 'America/La_Paz',
         )
     django.setup()
-    urlpatterns = [
-        path('', docente_view),
-        path('docentes/', docente_view),
-    ]
-
-    settings.ROOT_URLCONF = __name__
+    
+    settings.ROOT_URLCONF = sys.modules[__name__]
 
     from django.core.wsgi import get_wsgi_application
     application = get_wsgi_application()
