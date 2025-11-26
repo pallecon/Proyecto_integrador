@@ -10,6 +10,7 @@ from django.core.management import execute_from_command_line
 
 def crear_conexion():
     try:
+        # CONEXIÓN A BASE DE DATOS
         return mysql.connector.connect(
             host='localhost',
             user='root',
@@ -67,6 +68,15 @@ def reportes_view(request):
         """)
         reporte_data['docentes_por_modalidad'] = cursor.fetchall()
         
+        # Consulta para los estados de estudiantes
+        cursor.execute("""
+            SELECT estado, COUNT(id_estudiante)
+            FROM Estudiantes
+            GROUP BY estado
+            ORDER BY 2 DESC
+        """)
+        reporte_data['estudiantes_por_estado'] = cursor.fetchall()
+
     except Exception as e:
         mensaje_error = f"Error al ejecutar consultas SQL: {e}"
         print("Error en consultas SQL:", e)
@@ -84,6 +94,23 @@ def reportes_view(request):
     data_modalidad = [f[1] for f in reporte_data.get('docentes_por_modalidad', [])]
     js_labels_modalidad = str(labels_modalidad).replace("'", '"')
     js_data_modalidad = str(data_modalidad)
+    
+    # 🎯 LÓGICA CLAVE: CORREGIR ETIQUETAS DE ESTADO 
+    labels_estado_raw = [f[0] for f in reporte_data.get('estudiantes_por_estado', [])]
+    data_estado = [f[1] for f in reporte_data.get('estudiantes_por_estado', [])]
+
+    labels_estado_corregidos = []
+    
+    # Itera sobre los resultados y reemplaza valores nulos o vacíos
+    for label in labels_estado_raw:
+        # Si la etiqueta es None (SQL NULL) o una cadena vacía/solo espacios
+        if label is None or str(label).strip() == '':
+            labels_estado_corregidos.append("egresado") # <-- FUERZA A SER 'egresado'
+        else:
+            labels_estado_corregidos.append(label)
+
+    js_labels_estado = str(labels_estado_corregidos).replace("'", '"')
+    js_data_estado = str(data_estado)
     
     
     html = f'''
@@ -147,12 +174,18 @@ def reportes_view(request):
                     <canvas id="docentesPorModalidad" style="max-height: 400px;"></canvas>
                 </div>
                 
+                <div class="chart-container">
+                    <h3 class="chart-title">Estudiantes por Estado (Activo, Inactivo, Egresado)</h3>
+                    <canvas id="estudiantesPorEstado" style="max-height: 400px;"></canvas>
+                </div>
+                
             </div>
         </div>
 
         <script>
             Chart.register(ChartDataLabels);
             
+            // Gráfica Docentes por Área
             const labelsArea = {js_labels_area};
             const dataArea = {js_data_area};
             
@@ -193,6 +226,7 @@ def reportes_view(request):
                 }});
             }}
 
+            // Gráfica Docentes por Modalidad
             const labelsModalidad = {js_labels_modalidad};
             const dataModalidad = {js_data_modalidad};
             
@@ -228,6 +262,45 @@ def reportes_view(request):
                     }}
                 }});
             }}
+            
+            // NUEVA Gráfica Estudiantes por Estado
+            const labelsEstado = {js_labels_estado};
+            const dataEstado = {js_data_estado};
+            
+            if (dataEstado.length > 0) {{
+                const ctxEstado = document.getElementById('estudiantesPorEstado').getContext('2d');
+                new Chart(ctxEstado, {{
+                    type: 'doughnut', 
+                    data: {{
+                        labels: labelsEstado, 
+                        datasets: [{{
+                            data: dataEstado,
+                            // Paleta de 3 colores fijos: Azul, Rosa Pálido, Gris Azulado/Oscuro
+                            backgroundColor: ['#3e95cd', '#e8c3b9', '#546e7a'], 
+                            hoverOffset: 4
+                        }}]
+                    }},
+                    options: {{
+                        responsive: true,
+                        plugins: {{
+                            legend: {{ position: 'right' }},
+                            title: {{ display: false }},
+                            datalabels: {{ 
+                                formatter: (value, context) => {{
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = (value / total * 100).toFixed(1) + '%';
+                                    return value + ' (' + percentage + ')'; 
+                                }},
+                                color: '#223', 
+                                font: {{
+                                    weight: 'bold'
+                                }}
+                            }}
+                        }}
+                    }}
+                }});
+            }}
+            
         </script>
     </body>
     </html>
