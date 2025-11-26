@@ -1816,6 +1816,7 @@ urlpatterns = [
     path('anteriores_gestiones', lambda request: HttpResponse('<h1>Página de Anteriores Gestiones</h1>')),
     path('docentes', docente_view),
     path('estudiantes', estudiante_view),
+    path('estudiantes/', estudiante_view),
     path('modalidad', modalidad_view),
     path('etapas_titulacion', etapas_titulacion_view),
     path('captcha_image', captcha_image_view),
@@ -1838,3 +1839,4 @@ if __name__ == "__main__":
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServidor detenido.")
+
