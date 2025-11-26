@@ -7,95 +7,149 @@ from mysql.connector import Error
 from django.conf import settings
 import django
 from django.core.management import execute_from_command_line
+from django.views.decorators.csrf import csrf_exempt
 
-def crear_conexion(host_name, user_name, user_password, db_name):
-    """Crea y retorna una conexión MySQL; retorna None si falla."""
+ESTUDIANTES_POR_PAGINA = 10 
+
+def crear_conexion():
+    """Establece y retorna la conexión a la base de datos MySQL."""
     try:
-        conexion = mysql.connector.connect(
-            host=host_name,
-            user=user_name,
-            passwd=user_password,
-            database=db_name
+        
+        return mysql.connector.connect(
+            host='localhost',
+            user='root',
+            passwd='/73588144/',
+            database='proyecto'
         )
-        return conexion
-    except Error as err:
-        print(f"Error conexión MySQL: {err}")
+    except mysql.connector.Error as err:
+        print(f"Error de conexión: '{err}'")
         return None
 
+@csrf_exempt
 def estudiante_view(request):
+    """
+    Vista principal para la gestión de estudiantes, manejo de CRUD, búsqueda y paginación.
+    """
     mensaje_error = ""
-    modalidades = []
     estudiantes = []
-
-    conexion = crear_conexion('localhost', 'root', '/73588144/', 'proyecto')
+   
+    try:
+        pagina_actual = int(request.GET.get('page', 1))
+    except ValueError:
+        pagina_actual = 1
+        
+    termino_busqueda = request.GET.get('q', '').strip() 
+    total_paginas = 0
+    total_estudiantes = 0 
+    
+    conexion = crear_conexion()
     if conexion is None:
-        mensaje_error = "No se pudo conectar a la base de datos. Verifique la configuración."
-    else:
-        cursor = conexion.cursor()
-        try:
-            cursor.execute("SELECT id_modalidad, nombre_modalidad FROM Modalidades_Graduacion")
-            modalidades = cursor.fetchall()
+        return HttpResponse("<h2>Error de conexión a la base de datos.</h2>")
 
-            if request.method == "POST":
-                try:
-                    if request.POST.get("actualizar") == "1":
-                        id_estudiante = request.POST.get("id_estudiante")
-                        ci = request.POST.get("ci")
-                        ru = request.POST.get("ru")
-                        nombre = request.POST.get("nombre")
-                        apellidos = request.POST.get("apellidos")
-                        correo = request.POST.get("correo")
-                        estado = request.POST.get("estado")
-                        id_modalidad = request.POST.get("id_modalidad")
+    cursor = conexion.cursor()
+    
+    try:
+        
+        if request.method == "POST":
+            
+            if request.POST.get("actualizar") == "1":
+                id_estudiante = request.POST.get("id_estudiante")
+                nombre = request.POST.get("nombre")
+                correo = request.POST.get("correo")
+                ci = request.POST.get("ci")
+                carrera = request.POST.get("carrera")
+                
+                if id_estudiante and nombre and correo and ci and carrera:
+                    try:
                         cursor.execute("""
                             UPDATE Estudiantes
-                            SET CI=%s, RU=%s, nombre=%s, apellidos=%s, correo=%s, estado=%s, id_modalidad=%s
+                            SET nombre=%s, correo=%s, ci=%s, carrera=%s
                             WHERE id_estudiante=%s
-                        """, (ci, ru, nombre, apellidos, correo, estado, id_modalidad, id_estudiante))
+                        """, (nombre, correo, ci, carrera, id_estudiante))
                         conexion.commit()
-                    elif request.POST.get("eliminar") == "1":
-                        id_estudiante = request.POST.get("id_estudiante")
-                        cursor.execute("DELETE FROM Estudiantes WHERE id_estudiante=%s", (id_estudiante,))
+                        mensaje_error = "Estudiante actualizado con éxito."
+                    except mysql.connector.IntegrityError:
+                        mensaje_error = "Error: El correo o CI ingresado ya existen."
+                else:
+                    mensaje_error = "Todos los campos son obligatorios para actualizar."
+            
+            else: 
+                nombre = request.POST.get("nombre")
+                correo = request.POST.get("correo")
+                ci = request.POST.get("ci")
+                carrera = request.POST.get("carrera")
+
+                if nombre and correo and ci and carrera:
+                    try:
+                        cursor.execute("""
+                            INSERT INTO Estudiantes (nombre, correo, ci, carrera)
+                            VALUES (%s, %s, %s, %s)
+                        """, (nombre, correo, ci, carrera))
                         conexion.commit()
-                    else:
-                        ci = request.POST.get("ci")
-                        ru = request.POST.get("ru")
-                        nombre = request.POST.get("nombre")
-                        apellidos = request.POST.get("apellidos")
-                        correo = request.POST.get("correo")
-                        estado = request.POST.get("estado")
-                        id_modalidad = request.POST.get("id_modalidad")
-                        try:
-                            cursor.execute("""
-                                INSERT INTO Estudiantes (CI, RU, nombre, apellidos, correo, estado, id_modalidad)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            """, (ci, ru, nombre, apellidos, correo, estado, id_modalidad))
-                            conexion.commit()
-                        except mysql.connector.IntegrityError:
-                            mensaje_error = "Error: El CI ingresado ya existe."
-                except Exception as e:
-                    mensaje_error = "Ocurrió un error al procesar el formulario."
-                    print("Error procesando POST:", e)
+                        mensaje_error = "Nuevo estudiante registrado con éxito."
+                    except mysql.connector.IntegrityError:
+                        mensaje_error = "Error: El correo o CI ingresado ya existen."
+                else:
+                    mensaje_error = "Todos los campos son obligatorios para crear."
 
-            cursor.execute("""
-                SELECT e.id_estudiante, e.CI, e.RU, e.nombre, e.apellidos, e.correo, e.estado, m.nombre_modalidad
-                FROM Estudiantes e
-                LEFT JOIN Modalidades_Graduacion m ON e.id_modalidad = m.id_modalidad
-            """)
-            estudiantes = cursor.fetchall()
-        except Exception as e:
-            mensaje_error = "Error al consultar la base de datos."
-            print("Error consulta:", e)
-        finally:
-            try:
-                cursor.close()
-            except Exception:
-                pass
-            try:
-                conexion.close()
-            except Exception:
-                pass
+        
+       
+        sql_count = "SELECT COUNT(*) FROM Estudiantes e"
+        params = []
+        
+        if termino_busqueda:
+            sql_count += " WHERE e.nombre LIKE %s OR e.correo LIKE %s OR e.ci LIKE %s OR e.carrera LIKE %s"
+            like_term = f"%{termino_busqueda}%"
+            
+            params = [like_term, like_term, like_term, like_term] 
+        
+        cursor.execute(sql_count, tuple(params))
+        total_estudiantes = cursor.fetchone()[0]
+        
+        total_paginas = (total_estudiantes + ESTUDIANTES_POR_PAGINA - 1) // ESTUDIANTES_POR_PAGINA
+        
+        if pagina_actual < 1:
+            pagina_actual = 1
+        elif pagina_actual > total_paginas and total_paginas > 0:
+            pagina_actual = total_paginas
+        elif total_estudiantes == 0:
+            pagina_actual = 0
+            
+        offset = (pagina_actual - 1) * ESTUDIANTES_POR_PAGINA if pagina_actual > 0 else 0
+        
+        sql_select = """
+            SELECT id_estudiante, nombre, correo, ci, carrera
+            FROM Estudiantes e
+        """
+        
+        select_params = list(params) 
+        
+        if termino_busqueda:
+             sql_select += " WHERE e.nombre LIKE %s OR e.correo LIKE %s OR e.ci LIKE %s OR e.carrera LIKE %s"
+             
+        sql_select += " LIMIT %s OFFSET %s"
+        select_params.append(ESTUDIANTES_POR_PAGINA)
+        select_params.append(offset)
 
+        cursor.execute(sql_select, tuple(select_params))
+        estudiantes = cursor.fetchall()
+
+    except Exception as e:
+        mensaje_error = f"Error al consultar o modificar la base de datos: {e}"
+        print("Error en estudiante_view:", e)
+    finally:
+        if cursor: cursor.close()
+        if conexion: conexion.close()
+
+    data_paginacion = {
+        'total_paginas': total_paginas,
+        'pagina_actual': pagina_actual,
+        'termino_busqueda': termino_busqueda,
+        
+        'path_base': request.path.rstrip('/') 
+    }
+    
+    
     html = f'''
     <!DOCTYPE html>
     <html lang="es">
@@ -106,9 +160,10 @@ def estudiante_view(request):
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
         <style>
+            /* --- Estilos CSS (Idénticos a la vista de Docentes) --- */
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             :root {{
-                --primary: #0f3460; --primary-dark: #051e3e; --accent: #1e5a96;
+                --primary: #0b3b65; --primary-dark: #123a59; --accent: #1e73be;
                 --muted: #6b7280; --success: #43a047; --danger: #ef5350;
                 --bg: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
                 --shadow-lg: 0 8px 24px rgba(0,0,0,0.25);
@@ -144,6 +199,7 @@ def estudiante_view(request):
                 cursor: pointer;
                 font-weight: 600;
                 transition: all 0.25s;
+                text-decoration: none;
             }}
             .back-button:hover {{ transform: translateX(-4px); background: rgba(255,255,255,0.18); }}
             .top-title {{
@@ -152,7 +208,7 @@ def estudiante_view(request):
                 font-weight: 700;
                 margin: 0;
                 letter-spacing: 0.6px;
-                text-align: right;
+                text-align: center; 
                 flex: 1;
             }}
             .container {{
@@ -175,6 +231,7 @@ def estudiante_view(request):
                 color: white;
                 background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
                 box-shadow: 0 6px 18px rgba(15,52,96,0.18);
+                transition: background 0.2s;
             }}
             .tabla-wrapper {{
                 background: #ffffff;
@@ -187,32 +244,69 @@ def estudiante_view(request):
             th {{ padding: 14px 12px; text-align: left; font-weight: 700; font-size: 0.9rem; }}
             td {{ padding: 12px; border-bottom: 1px solid #f0f2f5; font-size: 0.95rem; color: #0a1929; }}
             tr:hover td {{ background: #fbfdff; transform: translateY(0); }}
-            .form-elegante {{ background: #fbfdff; padding: 18px; border-radius: 10px; border: 1px solid #eef2f7; margin-top: 18px; }}
-            .form-row {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }}
-            .form-row input, .form-row select {{ padding:10px 12px; border:1.5px solid #e6eef8; border-radius:8px; min-width:160px; }}
-            .form-buttons {{ display:flex; gap:10px; justify-content:center; margin-top:12px; }}
-            .btn-edit {{ background: linear-gradient(135deg, #6d4c41 0%, #8d5c41 100%); color: #fff; border-radius:8px; padding:8px 12px; }}
-            .btn-delete {{ background: linear-gradient(135deg, #b71c1c 0%, #d71c1c 100%); color: #fff; border-radius:8px; padding:8px 12px; }}
-            .error-msg {{ background: linear-gradient(90deg, #fee2e2 0%, #fecaca 100%); color: #991b1b; padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; font-weight:700; }}
-            @media (max-width: 768px) {{
-                .form-row {{ flex-direction: column; }}
-                .top-title {{ text-align: center; }}
-                .action-buttons {{ justify-content: center; }}
+            
+            .btn-edit {{ 
+                border-radius:8px; padding:8px 12px; border: none; cursor:pointer; 
+                color: #fff; font-weight: 700; font-size: 1.1em;
+                background: #8d5b38; 
             }}
+            .btn-edit:hover {{
+                background: #a67c52;
+            }}
+            .error-msg {{ background: linear-gradient(90deg, #fee2e2 0%, #fecaca 100%); color: #991b1b; padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; font-weight:700; }}
+            
+            .modal-container {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.7);
+                display: none;
+                justify-content: center;
+                align-items: center;
+                z-index: 1000;
+                transition: opacity 0.3s ease-in-out;
+                opacity: 0;
+            }}
+            .modal-container.active {{
+                opacity: 1;
+                display: flex;
+            }}
+            .modal-content {{
+                background: #ffffff;
+                padding: 30px;
+                border-radius: 12px;
+                box-shadow: var(--shadow-lg);
+                max-width: 600px;
+                width: 90%;
+                transform: translateY(-50px);
+                transition: transform 0.3s ease-in-out;
+            }}
+            .modal-container.active .modal-content {{
+                transform: translateY(0);
+            }}
+            .form-row {{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }}
+            .form-row input, .form-row select {{ flex: 1; padding:10px 12px; border:1.5px solid #e6eef8; border-radius:8px; min-width:160px; }}
+            .form-buttons {{ display:flex; gap:10px; justify-content:center; margin-top:12px; }}
+            /* --- Fin de Estilos CSS --- */
         </style>
     </head>
     <body>
         <div class="top-bar">
-            <button class="back-button" onclick="window.location.href='/menu'">
+            <a class="back-button" href="/menu">
                 <i class="fas fa-arrow-left"></i>
                 Volver al Menú
-            </button>
+            </a>
             <h1 class="top-title">Gestión de Estudiantes</h1>
+            <div style="width: 160px;"></div> 
         </div>
 
         <div class="container">
             <div class="action-buttons">
-                <button class="btn" onclick="mostrarFormularioCrear()"><i class="fas fa-plus"></i> Crear Nuevo Registro</button>
+                <input type="text" id="buscar_input" placeholder="Buscar por Nombre, CI, Correo o Carrera..." style="padding:10px 12px; border-radius:8px; border:1.5px solid #e6eef8; min-width:250px;">
+                <button class="btn" onclick="buscarEstudiante()"><i class="fas fa-search"></i> Buscar</button>
+                <button class="btn" onclick="mostrarModalCrear()"><i class="fas fa-plus"></i> Crear Nuevo Registro</button>
             </div>
 
             <div class="tabla-wrapper">
@@ -226,192 +320,199 @@ def estudiante_view(request):
                         <thead>
                             <tr>
                                 <th>CI</th>
-                                <th>RU</th>
                                 <th>Nombre</th>
-                                <th>Apellido</th>
                                 <th>Correo</th>
-                                <th>Modalidad</th>
+                                <th>Carrera</th>
                                 <th style="text-align:center;">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
     '''
+    
+   
     if estudiantes:
         for e in estudiantes:
+            id_est = str(e[0])
+            nombre = str(e[1] or "").replace("'", "\\'")
+            correo = str(e[2] or "").replace("'", "\\'")
+            ci = str(e[3] or "").replace("'", "\\'")
+            carrera = str(e[4] or "").replace("'", "\\'")
+            
+            ci_display = e[3] or "" 
+            
             html += f'''
-                            <tr>
-                                <td>{e[1] or ""}</td>
-                                <td>{e[2] or ""}</td>
-                                <td>{e[3] or ""}</td>
-                                <td>{e[4] or ""}</td>
-                                <td>{e[5] or ""}</td>
-                                <td>{e[7] or "N/A"}</td>
-                                <td style="text-align:center;">
-                                    <button class="btn-edit" onclick="mostrarFormularioActualizar()" title="Editar">✏️</button>
-                                    <button class="btn-delete" onclick="mostrarFormularioEliminar()" title="Bloquear">🚫</button>
-                                </td>
-                            </tr>
+                                <tr>
+                                    <td>{ci_display}</td>
+                                    <td>{e[1] or ""}</td>
+                                    <td>{e[2] or ""}</td>
+                                    <td>{e[4] or ""}</td>
+                                    <td style="text-align:center;">
+                                    <button class="btn-edit" onclick="editarRegistro('{id_est}', '{nombre}', '{correo}', '{ci}', '{carrera}')" title="Editar">✏️</button>
+                                    </td>
+                                </tr>
             '''
     else:
-        html += '<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--muted);">No hay estudiantes registrados.</td></tr>'
+        html += '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted);">No hay estudiantes registrados.</td></tr>'
 
     html += '''
                         </tbody>
                     </table>
                 </div>
             </div>
-
-            <div class="form-elegante" id="forms-area">
-                <form id="crear-form" method="post" style="display:none;">
-                    <h3>Crear Nuevo Estudiante</h3>
-                    <input type="hidden" name="csrfmiddlewaretoken" value="">
-                    <div class="form-row">
-                        <input type="text" name="ci" placeholder="CI" required>
-                        <input type="text" name="ru" placeholder="RU" required>
-                        <input type="text" name="nombre" placeholder="Nombre" required>
-                        <input type="text" name="apellidos" placeholder="Apellidos" required>
-                    </div>
-                    <div class="form-row">
-                        <input type="email" name="correo" placeholder="Correo" required>
-                        <select name="estado" required>
-                            <option value="">Estado</option>
-                            <option value="activo">Activo</option>
-                            <option value="inactivo">Inactivo</option>
-                            <option value="egresado">Egresado</option>
-                        </select>
-                        <select name="id_modalidad" required>
-                            <option value="">Modalidad</option>
     '''
-    for m in modalidades:
-        html += f'<option value="{m[0]}">{m[1]}</option>'
+    
+    
+    paginacion_html = '<div style="display:flex; justify-content:center; align-items:center; margin-top: 20px; gap: 20px; font-weight: 500;">'
+    
+    base_query = f'?q={data_paginacion["termino_busqueda"]}&page=' if data_paginacion["termino_busqueda"] else '?page='
+   
+    url_base = data_paginacion['path_base'] + base_query 
+
+    if data_paginacion["pagina_actual"] > 1:
+        url_anterior = url_base + str(data_paginacion["pagina_actual"] - 1)
+        paginacion_html += f'<a href="{url_anterior}" class="btn" style="padding: 8px 15px; text-decoration: none; background:var(--primary); color:#fff;"><i class="fas fa-chevron-left"></i> Anterior</a>'
+    else:
+        paginacion_html += f'<span style="padding: 8px 15px; background:#e0e0e0; color:#9e9e9e; cursor:not-allowed; border-radius: 8px;">Anterior</span>'
+
+    if data_paginacion["total_paginas"] > 0:
+        paginacion_html += f'<span style="font-size: 1.1em; color: var(--primary);">Página {data_paginacion["pagina_actual"]} de {data_paginacion["total_paginas"]}</span>'
+
+    if data_paginacion["pagina_actual"] < data_paginacion["total_paginas"]:
+        url_siguiente = url_base + str(data_paginacion["pagina_actual"] + 1)
+        paginacion_html += f'<a href="{url_siguiente}" class="btn" style="padding: 8px 15px; text-decoration: none; background:var(--primary); color:#fff;">Siguiente <i class="fas fa-chevron-right"></i></a>'
+    else:
+        paginacion_html += f'<span style="padding: 8px 15px; background:#e0e0e0; color:#9e9e9e; cursor:not-allowed; border-radius: 8px;">Siguiente</span>'
+
+
+    paginacion_html += '</div>'
+    
+    html += paginacion_html
 
     html += '''
-                        </select>
+        </div>
+        
+        <div class="modal-container" id="modal-crear" onclick="cerrarModal()">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <form id="crear-form" method="post">
+                    <h3 style="margin-top:0; color:var(--primary); text-align:center;">Crear Nuevo Estudiante</h3>
+                    <div class="form-row">
+                        <input type="text" name="nombre" placeholder="Nombre Completo" required>
+                        <input type="email" name="correo" placeholder="Correo Electrónico" required>
+                    </div>
+                    <div class="form-row">
+                        <input type="text" name="ci" placeholder="Cédula de Identidad (CI)" required>
+                        <input type="text" name="carrera" placeholder="Carrera/Programa" required>
                     </div>
                     <div class="form-buttons">
-                        <button type="button" class="btn" onclick="ocultarFormularios()" style="background:#9e9e9e;">Cancelar</button>
+                        <button type="button" class="btn" onclick="cerrarModal()" style="background:#9e9e9e;">Cancelar</button>
                         <button type="submit" class="btn">Guardar</button>
                     </div>
                 </form>
-
-                <form id="actualizar-form" method="post" style="display:none;">
-                    <h3>Actualizar Estudiante</h3>
-                    <input type="hidden" name="csrfmiddlewaretoken" value="">
+            </div>
+        </div>
+        
+        <div class="modal-container" id="modal-actualizar" onclick="cerrarModal()">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <form id="actualizar-form" method="post">
+                    <h3 style="margin-top:0; color:var(--primary); text-align:center;">Actualizar Estudiante</h3>
                     <input type="hidden" name="actualizar" value="1">
-                    <div class="form-row">
-                        <select id="estudiante-select" onchange="llenarFormularioActualizar()" required>
-                            <option value="">Seleccione un estudiante</option>
-    '''
-    for e in estudiantes:
-        html += f'<option value="{e[0]}|{e[1] or ""}|{e[2] or ""}|{e[3] or ""}|{e[4] or ""}|{e[5] or ""}|{e[6] or ""}|{e[7] or ""}">{e[3] or ""} {e[4] or ""}</option>'
-
-    html += '''
-                        </select>
-                    </div>
                     <input type="hidden" id="upd_id" name="id_estudiante">
                     <div class="form-row">
-                        <input type="text" id="upd_ci" name="ci" placeholder="CI" required>
-                        <input type="text" id="upd_ru" name="ru" placeholder="RU" required>
-                        <input type="text" id="upd_nombre" name="nombre" placeholder="Nombre" required>
-                        <input type="text" id="upd_apellidos" name="apellidos" placeholder="Apellidos" required>
+                        <input type="text" id="upd_nombre" name="nombre" placeholder="Nombre Completo" required>
+                        <input type="email" id="upd_correo" name="correo" placeholder="Correo Electrónico" required>
                     </div>
                     <div class="form-row">
-                        <input type="email" id="upd_correo" name="correo" placeholder="Correo" required>
-                        <select id="upd_estado" name="estado" required>
-                            <option value="">Estado</option>
-                            <option value="activo">Activo</option>
-                            <option value="inactivo">Inactivo</option>
-                            <option value="egresado">Egresado</option>
-                        </select>
-                        <select id="upd_id_modalidad" name="id_modalidad" required>
-                            <option value="">Modalidad</option>
-    '''
-    for m in modalidades:
-        html += f'<option value="{m[0]}">{m[1]}</option>'
-
-    html += '''
-                        </select>
+                        <input type="text" id="upd_ci" name="ci" placeholder="Cédula de Identidad (CI)" required>
+                        <input type="text" id="upd_carrera" name="carrera" placeholder="Carrera/Programa" required>
                     </div>
                     <div class="form-buttons">
-                        <button type="button" class="btn" onclick="ocultarFormularios()" style="background:#9e9e9e;">Cancelar</button>
+                        <button type="button" class="btn" onclick="cerrarModal()" style="background:#9e9e9e;">Cancelar</button>
                         <button type="submit" class="btn">Actualizar</button>
-                    </div>
-                </form>
-
-                <form id="eliminar-form" method="post" style="display:none;">
-                    <h3>Bloquear Estudiante</h3>
-                    <input type="hidden" name="csrfmiddlewaretoken" value="">
-                    <input type="hidden" name="eliminar" value="1">
-                    <div class="form-row">
-                        <select name="id_estudiante" required>
-                            <option value="">Seleccione un estudiante</option>
-    '''
-    for e in estudiantes:
-        html += f'<option value="{e[0]}">{e[3] or ""} {e[4] or ""}</option>'
-
-    html += '''
-                        </select>
-                    </div>
-                    <div class="form-buttons">
-                        <button type="button" class="btn" onclick="ocultarFormularios()" style="background:#9e9e9e;">Cancelar</button>
-                        <button type="submit" class="btn" style="background:linear-gradient(135deg,#b71c1c 0%,#d71c1c 100%);">Bloquear</button>
                     </div>
                 </form>
             </div>
         </div>
 
         <script>
-            function mostrarFormularioCrear() {{
-                document.getElementById('crear-form').style.display = 'block';
-                document.getElementById('actualizar-form').style.display = 'none';
-                document.getElementById('eliminar-form').style.display = 'none';
-                document.getElementById('crear-form').scrollIntoView({{ behavior: 'smooth' }});
-            }}
-            function mostrarFormularioActualizar() {{
-                document.getElementById('actualizar-form').style.display = 'block';
-                document.getElementById('crear-form').style.display = 'none';
-                document.getElementById('eliminar-form').style.display = 'none';
-                document.getElementById('actualizar-form').scrollIntoView({{ behavior: 'smooth' }});
-            }}
-            function mostrarFormularioEliminar() {{
-                document.getElementById('eliminar-form').style.display = 'block';
-                document.getElementById('crear-form').style.display = 'none';
-                document.getElementById('actualizar-form').style.display = 'none';
-                document.getElementById('eliminar-form').scrollIntoView({{ behavior: 'smooth' }});
-            }}
-            function ocultarFormularios() {{
-                document.getElementById('crear-form').style.display = 'none';
-                document.getElementById('actualizar-form').style.display = 'none';
-                document.getElementById('eliminar-form').style.display = 'none';
-            }}
-            function llenarFormularioActualizar() {{
-                var select = document.getElementById('estudiante-select');
-                var datos = select.value.split('|');
-                document.getElementById('upd_id').value = datos[0];
-                document.getElementById('upd_ci').value = datos[1];
-                document.getElementById('upd_ru').value = datos[2];
-                document.getElementById('upd_nombre').value = datos[3];
-                document.getElementById('upd_apellidos').value = datos[4];
-                document.getElementById('upd_correo').value = datos[5];
-                document.getElementById('upd_estado').value = datos[6];
-                var modalidadSelect = document.getElementById('upd_id_modalidad');
-                for (var i = 0; i < modalidadSelect.options.length; i++) {{
-                    if (modalidadSelect.options[i].text === datos[7]) {{
-                        modalidadSelect.selectedIndex = i;
-                        break;
-                    }}
-                }}
-            }}
-            document.querySelectorAll('input[name="csrfmiddlewaretoken"]').forEach(function(input){{
-                input.value = (document.cookie.match(/csrftoken=([^;]+)/)||[])[1]||'';
-            }});
-        </script>
+    
+    function showModal(id) {
+        if (id === 'modal-crear') {
+            document.getElementById('crear-form').reset();
+        }
+
+        document.getElementById('modal-crear').classList.remove('active');
+        document.getElementById('modal-actualizar').classList.remove('active');
+        
+        document.getElementById('modal-crear').style.display = 'none';
+        document.getElementById('modal-actualizar').style.display = 'none';
+
+        const modal = document.getElementById(id);
+        modal.style.display = 'flex';
+        setTimeout(function() {
+            modal.classList.add('active');
+        }, 10);
+    }
+
+    function cerrarModal() {
+        document.getElementById('modal-crear').classList.remove('active');
+        document.getElementById('modal-actualizar').classList.remove('active');
+        
+        setTimeout(function() {
+            document.getElementById('modal-crear').style.display = 'none';
+            document.getElementById('modal-actualizar').style.display = 'none';
+        }, 300);
+    }
+    
+    function mostrarModalCrear() {
+        showModal('modal-crear');
+    }
+
+    function editarRegistro(id, nombre, correo, ci, carrera) {
+        document.getElementById('upd_id').value = id;
+        document.getElementById('upd_nombre').value = nombre;
+        document.getElementById('upd_correo').value = correo;
+        document.getElementById('upd_ci').value = ci;
+        document.getElementById('upd_carrera').value = carrera;
+        
+        showModal('modal-actualizar');
+    }
+    
+    function buscarEstudiante() {
+        var input = document.getElementById('buscar_input').value.trim();
+        const currentPath = window.location.pathname;
+        
+        let newUrl = currentPath;
+        if (input) {
+             // Redirige al inicio de la paginación con el filtro
+            newUrl += '?q=' + encodeURIComponent(input) + '&page=1'; 
+        } else {
+             // Si se borra la búsqueda, vuelve a la página 1
+            newUrl += '?page=1';
+        }
+        window.location.href = newUrl;
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const query = urlParams.get('q');
+        if (query) {
+            document.getElementById('buscar_input').value = query;
+        }
+    });
+</script>
     </body>
+    
     </html>
     '''
     return HttpResponse(html)
 
-
+urlpatterns = [
+    
+    path('', estudiante_view),
+    
+    path('estudiantes/', estudiante_view),
+    path('estudiantes', estudiante_view), 
+]
 if __name__ == "__main__":
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     SECRET_KEY = 'secret-key'
@@ -421,7 +522,7 @@ if __name__ == "__main__":
         settings.configure(
             DEBUG=DEBUG,
             SECRET_KEY=SECRET_KEY,
-            ROOT_URLCONF=__name__,
+            ROOT_URLCONF=sys.modules[__name__], 
             ALLOWED_HOSTS=['*'],
             INSTALLED_APPS=[
                 'django.contrib.contenttypes',
@@ -437,8 +538,6 @@ if __name__ == "__main__":
                         'context_processors': [
                             'django.template.context_processors.debug',
                             'django.template.context_processors.request',
-                            'django.contrib.auth.context_processors.auth',
-                            'django.contrib.messages.context_processors.messages',
                         ],
                     },
                 },
@@ -449,15 +548,7 @@ if __name__ == "__main__":
             TIME_ZONE = 'America/La_Paz',
         )
     django.setup()
-    urlpatterns = [
-        path('', estudiante_view),
-        path('estudiantes/', estudiante_view),
-    ]
-
-    from django.urls import include
-    settings.ROOT_URLCONF = __name__
-
+    settings.ROOT_URLCONF = sys.modules[__name__]
     from django.core.wsgi import get_wsgi_application
     application = get_wsgi_application()
-
     execute_from_command_line([sys.argv[0], "runserver", "8000"])
